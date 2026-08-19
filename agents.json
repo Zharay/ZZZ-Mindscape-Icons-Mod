@@ -397,6 +397,18 @@
       "round": { "hash": "2ca53475", "offset": [-180, 240], "scale": 0.7, "rotation": -30 }
     }
   ],
+  "Sigrid": [
+    {
+      "tab": { "hash": "f579fe69", "offset": [150, 172], "scale": 0.8, "rotation": 10 },
+      "select": { "hash": "e6d9bfd3", "offset": [220, 112], "scale": 1, "rotation": 10 },
+      "round": { "hash": "9d760250", "offset": [134, 172], "scale": 0.8, "rotation": 10 }
+    },
+    {
+      "tab": { "hash": "f250d985", "offset": [-10, 155], "scale": 0.8, "rotation": -20 },
+      "select": { "hash": "cdf1ed1d", "offset": [25, 65], "scale": 0.8, "rotation": -10 },
+      "round": { "hash": "59ade3bf", "offset": [-10, 155], "scale": 0.8, "rotation": -10 }
+    }
+  ],
   "Soldier11": [
     { 
       "tab": { "hash": "728f0f41", "offset": [130, 100], "scale": 0.6, "rotation": 10 },
