@@ -198,6 +198,11 @@
       "tab": { "hash": "66494aea", "offset": [-40, 10], "scale": 0.66, "rotation": 0 },
       "select": { "hash": "0B482873", "offset": [-20, -40], "scale": 0.7, "rotation": 0 },
       "round": { "hash": "7ac49f1e", "offset": [-40, 20], "scale": 0.7, "rotation": 0 }
+    },
+    {
+      "tab": { "hash": "f4ec9dc2", "offset": [-40, 10], "scale": 0.66, "rotation": 0 },
+      "select": { "hash": "f0c25ba0", "offset": [-20, -40], "scale": 0.7, "rotation": 0 },
+      "round": { "hash": "c46cd543", "offset": [-40, 20], "scale": 0.7, "rotation": 0 }
     }
   ],
   "Lycaon": [
@@ -332,17 +337,17 @@
     {
       "tab": { "hash": "217abe7b", "offset": [-10, 155], "scale": 0.8, "rotation": -20 },
       "select": { "hash": "4c468c78", "offset": [25, 65], "scale": 0.8, "rotation": -10 },
-      "round": { "hash": "????????", "offset": [-10, 155], "scale": 0.8, "rotation": -10 }
+      "round": { "hash": "fa502f0c", "offset": [-10, 155], "scale": 0.8, "rotation": -10 }
     },
     {
       "tab": { "hash": "613bd6ab", "offset": [-10, 155], "scale": 0.8, "rotation": -20 },
       "select": { "hash": "033d8649", "offset": [25, 65], "scale": 0.8, "rotation": -10 },
-      "round": { "hash": "????????", "offset": [-10, 155], "scale": 0.8, "rotation": -10 }
+      "round": { "hash": "ee92981a", "offset": [-10, 155], "scale": 0.8, "rotation": -10 }
     },
     {
       "tab": { "hash": "f1eeaad6", "offset": [-10, 155], "scale": 0.8, "rotation": -20 },
       "select": { "hash": "488c2e84", "offset": [25, 65], "scale": 0.8, "rotation": -10 },
-      "round": { "hash": "????????", "offset": [-10, 155], "scale": 0.8, "rotation": -10 }
+      "round": { "hash": "1ff8e74e", "offset": [-10, 155], "scale": 0.8, "rotation": -10 }
     }
   ],
   "Rina": [
@@ -390,6 +395,18 @@
       "tab": { "hash": "64f20e30", "offset": [-130, 205], "scale": 0.6, "rotation": -45 },
       "select": { "hash": "11998cfc", "offset": [-230, 160], "scale": 0.8, "rotation": -20 },
       "round": { "hash": "2ca53475", "offset": [-180, 240], "scale": 0.7, "rotation": -30 }
+    }
+  ],
+  "Sigrid": [
+    {
+      "tab": { "hash": "f579fe69", "offset": [150, 172], "scale": 0.8, "rotation": 10 },
+      "select": { "hash": "e6d9bfd3", "offset": [220, 112], "scale": 1, "rotation": 10 },
+      "round": { "hash": "9d760250", "offset": [134, 172], "scale": 0.8, "rotation": 10 }
+    },
+    {
+      "tab": { "hash": "f250d985", "offset": [150, 172], "scale": 0.8, "rotation": 10 },
+      "select": { "hash": "cdf1ed1d", "offset": [220, 112], "scale": 1, "rotation": 10 },
+      "round": { "hash": "59ade3bf", "offset": [134, 172], "scale": 0.8, "rotation": 10 }
     }
   ],
   "Soldier11": [
