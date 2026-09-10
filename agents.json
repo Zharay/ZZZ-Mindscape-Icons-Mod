@@ -99,6 +99,13 @@
       "round": { "hash": "ae23fb06", "offset": [-120, 80], "scale": 0.6, "rotation": 0 }
     }
   ],
+  "Claret": [
+    {
+      "tab": { "hash": "f97546f3", "offset": [-70, 80], "scale": 0.7, "rotation": -4 },
+      "select": { "hash": "4162e8be", "offset": [-50, 20], "scale": 0.68, "rotation": -10 },
+      "round": { "hash": "93be04ad", "offset": [-90, 95], "scale": 0.7, "rotation": 0 }
+    }
+  ],
   "Corin": [
     { 
       "tab": { "hash": "1f4fea0b", "offset": [-30, 40], "scale": 0.55, "rotation": 0 },

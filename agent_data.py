@@ -83,8 +83,9 @@ def create_texture_override(agent: str, skin_idx: int, source_dirs: list[str], h
             filename = {file_name}
             """)
 
-def create_ini_header(mod_name: str, source_dirs: list[str]) -> str:
-    header = f"; {mod_name} {'-' * (60 - len(mod_name))}\n\n"
+def create_ini_header(mod_name: str, mod_ver: str, source_dirs: list[str]) -> str:
+    text = f"{mod_name} v{mod_ver}"
+    header = f"; {text} {'-' * (60 - len(text))}\n\n"
 
     if len(source_dirs) > 1:
         header += dedent(f"""\
@@ -158,7 +159,7 @@ def create_ini() -> None:
 
     ini_path = os.path.join(mod_folder, f"{MOD_NAME.replace(" ", "")}.ini")
     with open(ini_path, 'w', encoding='utf-8') as output:
-        output.write(create_ini_header(MOD_NAME, SOURCE_DIRS))
+        output.write(create_ini_header(MOD_NAME, MOD_VERSION, SOURCE_DIRS))
 
         for name, skins in agent_dict.items():
             result = ""

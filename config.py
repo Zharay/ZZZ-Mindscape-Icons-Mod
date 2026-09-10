@@ -1,5 +1,5 @@
 MOD_NAME: str = "Mindscape Icons"
-MOD_VERSION: str = "3.1.4"
+MOD_VERSION: str = "3.2"
 
 # To update textures for a single agent, replace None with that agent's name
 CUR_AGENT: str | None = None
@@ -16,4 +16,4 @@ EXPORT_DIR: str = "export"
 FALLBACK_MODE: str = "original"
 
 # Should the export directory be cleaned before generation?
-CLEAN_EXPORTS: bool = True
+CLEAN_EXPORTS: bool = False
