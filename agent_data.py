@@ -195,13 +195,13 @@ def create_ini() -> None:
             ini_name = f"{MOD_NAME.replace(' ', '')}_{suffix}.ini"
             ini_path = os.path.join(mod_folder, ini_name)
             with open(ini_path, 'w', encoding='utf-8') as output:
-                output.write(create_ini_header(MOD_NAME, SOURCE_DIRS))
+                output.write(create_ini_header(MOD_NAME, MOD_VERSION, SOURCE_DIRS))
                 output.write(collect_overrides_for_skin_type(skin_type))
                 output.write(footer)
     else:
         ini_path = os.path.join(mod_folder, f"{MOD_NAME.replace(' ', '')}.ini")
         with open(ini_path, 'w', encoding='utf-8') as output:
-            output.write(create_ini_header(MOD_NAME, SOURCE_DIRS))
+            output.write(create_ini_header(MOD_NAME, MOD_VERSION, SOURCE_DIRS))
             output.write(collect_overrides_for_skin_type('select'))
             output.write(collect_overrides_for_skin_type('tab'))
             output.write(collect_overrides_for_skin_type('round'))
