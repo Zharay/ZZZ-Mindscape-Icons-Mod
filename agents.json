@@ -364,6 +364,13 @@
       "round": { "hash": "d619b889", "offset": [190, 100], "scale": 0.6, "rotation": 0 }
     }
   ],
+  "Roxy": [
+    {
+      "tab": { "hash": "ecc1074a", "offset": [-200, 82], "scale": 0.7, "rotation": -8 },
+      "select": { "hash": "b150fbba", "offset": [-200, 64], "scale": 0.7, "rotation": -8 },
+      "round": { "hash": "cd277d63", "offset":  [-210, 130], "scale": 0.66, "rotation": -8 }
+    }
+  ],
   "SAnby": [
     { 
       "tab": { "hash": "5b73ab49", "offset": [-20, 60], "scale": 0.55, "rotation": 100 },
