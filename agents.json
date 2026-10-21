@@ -310,6 +310,23 @@
       "round": { "hash": "03b8a6b3", "offset": [180, 150], "scale": 0.7, "rotation": 0 }
     }
   ],
+  "Phoenix": [
+    {
+      "tab": { "hash": "35ac8a9c",  "offset": [-118, 270], "scale": 0.7, "rotation": -65 },
+      "select": { "hash": "0ee3ca2b", "offset": [-158, 150], "scale": 0.63, "rotation": -44 },
+      "round": { "hash": "24d1b230", "offset": [-210, 250], "scale": 0.68, "rotation": -44 }
+    },
+    {
+      "tab": { "hash": "5a7797c1",  "offset": [-118, 270], "scale": 0.7, "rotation": -65 },
+      "select": { "hash": "c4794fb8", "offset": [-158, 150], "scale": 0.63, "rotation": -44 },
+      "round": { "hash": "????????", "offset": [-210, 250], "scale": 0.68, "rotation": -44 }
+    },
+    {
+      "tab": { "hash": "66729123",  "offset": [-118, 270], "scale": 0.7, "rotation": -65 },
+      "select": { "hash": "5a7797c1", "offset": [-158, 150], "scale": 0.63, "rotation": -44 },
+      "round": { "hash": "????????", "offset": [-210, 250], "scale": 0.68, "rotation": -44 }
+    }
+  ],
   "Piper": [
     { 
       "tab": { "hash": "5aef8344",  "offset": [100, -40], "scale": 0.55, "rotation": -30 },
