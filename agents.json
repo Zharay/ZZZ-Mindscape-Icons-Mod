@@ -322,8 +322,8 @@
       "round": { "hash": "????????", "offset": [-210, 250], "scale": 0.68, "rotation": -44 }
     },
     {
-      "tab": { "hash": "66729123",  "offset": [-118, 270], "scale": 0.7, "rotation": -65 },
-      "select": { "hash": "5a7797c1", "offset": [-158, 150], "scale": 0.63, "rotation": -44 },
+      "tab": { "hash": "5a7797c1",  "offset": [-118, 270], "scale": 0.7, "rotation": -65 },
+      "select": { "hash": "66729123", "offset": [-158, 150], "scale": 0.63, "rotation": -44 },
       "round": { "hash": "????????", "offset": [-210, 250], "scale": 0.68, "rotation": -44 }
     }
   ],
