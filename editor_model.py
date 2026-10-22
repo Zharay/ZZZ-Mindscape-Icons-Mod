@@ -150,14 +150,15 @@ def hash_from_filename(path: str | Path) -> str:
 
 def agent_json(agents: Agents) -> bytes:
     lines = ["{"]
-    for n, (name, skins) in enumerate(agents.items()):
+    for n, (name, skins) in enumerate(sorted(agents.items(), key=lambda item: item[0].casefold())):
         lines.append(f"  {json.dumps(name)}: [")
         for index, skin in enumerate(skins):
             lines.append("    {")
             for k, (kind, entry) in enumerate(skin.items()):
                 ordered = {key: entry[key] for key in DEFAULT_MASK}
+                serialized = json.dumps(ordered, allow_nan=False)
                 lines.append(
-                    f"      {json.dumps(kind)}: {json.dumps(ordered, allow_nan=False)}"
+                    f"      {json.dumps(kind)}: {{ {serialized[1:-1]} }}"
                     + ("," if k < len(skin) - 1 else "")
                 )
             lines.append("    }" + ("," if index < len(skins) - 1 else ""))
@@ -184,7 +185,12 @@ class Draft:
         value = read_json(self.root / "agents.json")
         self.hash_warnings = replace_invalid_hashes(value)
         self._hash_repairs_pending = bool(self.hash_warnings)
-        self.agents = validate_agents(value, self.settings, self.root)
+        loaded_agents = validate_agents(value, self.settings, self.root)
+        ordered_names = sorted(loaded_agents, key=str.casefold)
+        self._agent_order_repair_pending = list(loaded_agents) != ordered_names
+        self.agents = {
+            name: loaded_agents[name] for name in ordered_names
+        }
         self.saved_agents = deepcopy(self.agents)
         self.saved_settings = deepcopy(self.settings)
         self.originals: dict[Path, bytes | None] = {
@@ -196,7 +202,8 @@ class Draft:
     @property
     def dirty(self) -> bool:
         return bool(
-            self.imports or self._hash_repairs_pending or self.agents != self.saved_agents
+            self.imports or self._hash_repairs_pending or self._agent_order_repair_pending
+            or self.agents != self.saved_agents
             or self.settings != self.saved_settings
         )
 
@@ -251,7 +258,7 @@ class Draft:
             raise ValueError(f"Agent already exists: {name}")
         candidate[name] = [{}]
         validate_agents(candidate, self.settings, self.root)
-        self.agents = candidate
+        self.agents = dict(sorted(candidate.items(), key=lambda item: item[0].casefold()))
 
     def add_skin(self, name: str) -> int:
         candidate = deepcopy(self.agents)
@@ -326,7 +333,10 @@ class Draft:
             if (path.parent == self.root or path in self.imports) and file_bytes(path) != original:
                 raise ValueError(f"File changed outside the editor; reload before saving: {path}")
         writes: dict[Path, bytes] = {}
-        if self._hash_repairs_pending or self.agents != self.saved_agents:
+        if (
+            self._hash_repairs_pending or self._agent_order_repair_pending
+            or self.agents != self.saved_agents
+        ):
             writes[self.root / "agents.json"] = agent_json(self.agents)
         if self.settings != self.saved_settings or self.originals[self.root / "config.json"] is None:
             if self.dirty:
@@ -383,6 +393,7 @@ class Draft:
             self.originals[path] = content
         self.saved_agents = deepcopy(self.agents)
         self._hash_repairs_pending = False
+        self._agent_order_repair_pending = False
         self.saved_settings = deepcopy(self.settings)
         self.imports.clear()
         return list(backups.values())

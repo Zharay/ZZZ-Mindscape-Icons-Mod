@@ -232,7 +232,7 @@ class Editor:
         self.tree.delete(*self.tree.get_children())
         self.tree_items.clear()
         selected_item = None
-        for name, skins in self.draft.agents.items():
+        for name, skins in sorted(self.draft.agents.items(), key=lambda item: item[0].casefold()):
             if self.search.get().casefold() not in name.casefold():
                 continue
             parent = self.tree.insert("", "end", text=name, open=False)

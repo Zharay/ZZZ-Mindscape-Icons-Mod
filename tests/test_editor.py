@@ -72,6 +72,25 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(loaded.hash_warnings, [])
         self.assertFalse(loaded.dirty)
 
+    def test_load_sorts_agents_and_save_repairs_json_order(self):
+        path = self.root / "agents.json"
+        path.write_text(
+            json.dumps({"Zoe": [{}], "alice": [{}], "Bob": [{}]}),
+            encoding="utf-8",
+        )
+        original = path.read_bytes()
+
+        draft = Draft(self.root)
+        self.assertEqual(list(draft.agents), ["alice", "Bob", "Zoe"])
+        self.assertTrue(draft.dirty)
+        backups = draft.save()
+
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), original)
+        self.assertEqual(list(json.loads(path.read_text(encoding="utf-8"))), ["alice", "Bob", "Zoe"])
+        self.assertFalse(draft.dirty)
+        self.assertEqual(draft.save(), [])
+
     def test_save_replaces_invalid_hashes_and_preserves_other_edits(self):
         self.draft.agents["Alice"][0]["select"]["hash"] = "not hex"
         self.draft.agents["Alice"][0]["tab"]["hash"] = ""
@@ -83,6 +102,18 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(loaded.agents["Alice"][0]["tab"]["hash"], BLANK_HASH)
         self.assertEqual(loaded.agents["Alice"][0]["round"]["offset"], [10, -20])
         self.assertFalse(self.draft.dirty)
+
+    def test_save_spaces_inline_mask_objects(self):
+        self.draft.agents["Alice"][0]["select"]["hash"] = "89abcdef"
+
+        self.draft.save()
+
+        saved = (self.root / "agents.json").read_text(encoding="utf-8")
+        self.assertIn(
+            '      "select": { "hash": "89abcdef", "offset": [0, 0], '
+            '"scale": 0.7, "rotation": 0 }',
+            saved,
+        )
 
     def test_hash_repair_does_not_hide_structural_errors(self):
         path = self.root / "agents.json"
@@ -219,6 +250,14 @@ class DraftTests(unittest.TestCase):
         editor.rebuild_tree()
         self.assertTrue(all(not tags for tags in self.tree_tags(editor).values()))
 
+    def test_tree_displays_agents_alphabetically(self):
+        self.draft.agents = {"Zoe": [{}], "alice": [{}], "Bob": [{}]}
+        editor = self.tree_editor()
+        editor.rebuild_tree()
+
+        roots = editor.tree.get_children()
+        self.assertEqual([editor.tree.item(item, "text") for item in roots], ["alice", "Bob", "Zoe"])
+
     def test_tree_highlights_update_after_repairs_removal_and_save(self):
         self.draft.agents["Alice"][0]["select"]["hash"] = BLANK_HASH
         self.draft.agents["Alice"][0]["tab"]["hash"] = BLANK_HASH
@@ -260,6 +299,14 @@ class DraftTests(unittest.TestCase):
         self.assertNotIn("tab", loaded.agents["Alice"][0])
         self.assertTrue((self.root / "sources" / "M6" / "NewAgentSkinM6.png").exists())
         self.assertFalse(loaded.dirty)
+
+    def test_add_agent_keeps_draft_and_saved_json_alphabetical(self):
+        self.draft.add_agent("Aaron")
+
+        self.assertEqual(list(self.draft.agents), ["Aaron", "Alice"])
+        self.draft.save()
+        saved = json.loads((self.root / "agents.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(saved), ["Aaron", "Alice"])
 
     def test_invalid_agents_and_skin_collision(self):
         for name in ("alice", "../Oops", "CON", "Bad Name", "1Wrong", "AliceSkin"):
