@@ -1,27 +1,30 @@
+from pathlib import Path
 import os
 import shutil
 
-from agent_data import gen_textures, create_ini, export
-from masks import gen_masks
-from config import CLEAN_EXPORTS, EXPORT_DIR
+from config import ROOT, load_config, resolve_path
 
-# --------------------------------------------------------------
 
-# Generate texture masks
-gen_masks()
+def main() -> None:
+    settings = load_config()
+    os.chdir(ROOT)
+    # Load/validate agent data before any cleanup or mask writes.
+    from editor_model import Draft
+    Draft(ROOT).validate()
+    from agent_data import gen_textures, create_ini, export
+    from masks import gen_masks
 
-# Clean export dir
-if CLEAN_EXPORTS:
-    print("Force clean requested! Recreating export directory...")
-    shutil.rmtree(EXPORT_DIR, ignore_errors=True)
-    os.makedirs(EXPORT_DIR)
-    print("")
+    export_dir: Path = resolve_path(ROOT, settings["EXPORT_DIR"])
+    gen_masks()
+    if settings["CLEAN_EXPORTS"]:
+        print(f"Force clean requested! Recreating {export_dir}...")
+        if export_dir.exists():
+            shutil.rmtree(export_dir)
+        export_dir.mkdir(parents=True)
+    gen_textures()
+    create_ini()
+    export()
 
-# Generate mindscape textures
-gen_textures()
 
-# Generate INI file
-create_ini()
-
-# Export to ZIP
-export()
+if __name__ == "__main__":
+    main()

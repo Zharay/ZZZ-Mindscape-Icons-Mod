@@ -1,22 +1,20 @@
 from __future__ import annotations
 
 import typing
-from typing import TypedDict, Literal, List
+from typing import Literal
 from textwrap import dedent
 import json
 import os
 import shutil
+from pathlib import Path
 
 from config import MOD_NAME, MOD_VERSION, CUR_AGENT, SOURCE_DIRS, EXPORT_DIR, SEPARATE_INIS
 import textures
+from editor_model import Agents
 
 HashType = Literal['Select', 'Tab', 'Round']
 
-class SkinData(TypedDict, total=False):
-    tab: str
-    select: str
-
-agent_dict: dict[str, List[SkinData]]
+agent_dict: Agents
 with open('agents.json', 'rt', encoding='utf-8') as agent_data:
     agent_dict = json.load(agent_data)
 
@@ -29,7 +27,7 @@ def create_texture_override(agent: str, skin_idx: int, source_dirs: list[str], h
 
     available_resources = []
     for source_dir in source_dirs:
-        variant = os.path.basename(source_dir)
+        variant = Path(source_dir).name
         if variant == "sources":
             variant = ""
 
@@ -87,36 +85,27 @@ def create_ini_header(mod_name: str, mod_ver: str, source_dirs: list[str]) -> st
     text = f"{mod_name} v{mod_ver}"
     header = f"; {text} {'-' * (60 - len(text))}\n\n"
 
+    header += f"; Constants {'-' * (60 - 9)}\n\n[Constants]\n"
+    if len(source_dirs) > 1:
+        header += "global persist $variant = 0\n"
+    for kind in ("Select", "Tab", "Round"):
+        header += f"global persist $use{kind} = 1\n"
+    header += "\n"
     if len(source_dirs) > 1:
         header += dedent(f"""\
-            ; Constants {'-' * (60 - 9)}
-            
-            [Constants]
-            global persist $variant = 0
-            global persist $useSelect = 1
-            global persist $useTab = 1
-            global persist $useRound = 1
-            
             [KeySwapVariant]
             key = ctrl space
             type = cycle
             $variant = {','.join(str(i) for i in range(len(source_dirs)))}
-            
-            [KeyToggleSelect]
-            key = ctrl alt shift 1
+
+            """)
+    for index, kind in enumerate(("Select", "Tab", "Round"), 1):
+        header += dedent(f"""\
+            [KeyToggle{kind}]
+            key = ctrl alt shift {index}
             type = cycle
-            $useSelect = 0,1
-            
-            [KeyToggleTab]
-            key = ctrl alt shift 2
-            type = cycle
-            $useTab = 0,1
-            
-            [KeyToggleRound]
-            key = ctrl alt shift 3
-            type = cycle
-            $useRound = 0,1
-        
+            $use{kind} = 0,1
+
             """)
 
     header += f"; Overrides {'-' * (60 - 9)}\n"
@@ -146,7 +135,10 @@ def gen_textures() -> None:
         for i, skin in enumerate(skins):
             for skin_type, generator in skin_generators.items():
                 if skin.get(skin_type, {}).get('hash'):
-                    hash, offset, scale, rotation = skin[skin_type].values()
+                    entry = skin[skin_type]
+                    offset = entry['offset']
+                    scale = entry['scale']
+                    rotation = entry['rotation']
                     for source_dir in SOURCE_DIRS:
                         generator(source_dir, fallback_dir, export_dir, name, i, offset, scale, rotation)
     print("")
@@ -214,5 +206,5 @@ def export() -> None:
     print("Exporting mod contents to zip...")
     zip_name = MOD_NAME.lower().replace(" ", "_") + "_v" + MOD_VERSION
 
-    shutil.make_archive(os.path.join("export", zip_name), "zip", "export", MOD_NAME)
+    shutil.make_archive(os.path.join(EXPORT_DIR, zip_name), "zip", EXPORT_DIR, MOD_NAME)
     print(f"Finished exporting {MOD_NAME} to {zip_name}.zip! x3c\n")

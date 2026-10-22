@@ -2,8 +2,9 @@
 This mod replaces most instances of Zenless Zone Zero's agent icons with their Mindscape artworks. For the mod download,
 see [releases](https://github.com/brewffee/ZZZ-Mindscape-Icons-Mod/releases).
 
-Included in the repository is the python tool used to generate the mod content. Agent image properties and hashes can be
-found and configured in the `agents.json` file, and source images can be found in the `sources` folder.
+Included in the repository are the Python generator and a visual `editor.py` desktop tool.
+Agent image properties and game texture hashes are stored in `agents.json`, source
+artwork is in `sources`, and generator settings are in `config.json`.
 
 ![The agent selection screen with Mindscape icons enabled](screenshots/selection.png)
 
@@ -22,16 +23,44 @@ page.
 
 ## Building
 ### Prerequisites
-- Python 3.12 and the [Pillow](https://pypi.org/project/pillow/) library (`pip install Pillow`)
+- Python 3.12
+- [Pillow](https://pypi.org/project/pillow/) library:
+  ```powershell
+  python -m pip install Pillow
+  ```
 
-### Usage
-- Run `main.py` to generate mod content. The project folder can then be imported into the ZZMI Mods folder for use 
-in-game.
-  - If you only want to update a single agent, edit the `CUR_AGENT` constant in `main.py` to the desired agent's name.
-  - If you want to use a different image for an agent's skin art, you can add a new file in the `sources` folder with
-  the format `<Agent>Skin.png`, `<Agent>Skin2.png`, etc.
-  - To add new toggleable icon variants, create a new directory in the `sources` folder and add it to the `SOURCE_DIRS` 
-  constant in `config.py`.
+### Visual editor
+
+```powershell
+python editor.py
+```
+
+Use the editor to choose an agent and image, adjust how the image fits, then
+save your changes. When you're ready, choose **Generate Mod** to create the files
+for the game. If you have unsaved changes, the editor will ask whether to save
+them first.
+
+An image is shared across that agent's icon shapes, so changing it may affect
+more than one screen. Check the previews before generating the mod.
+
+### Edit configuration
+
+Most users can leave the settings as they are. To change them, choose **Edit
+Config** in the editor. You can also edit `config.json` directly, but close the
+editor first. The settings control the mod name, image variants, output folder,
+and image appearance.
+
+### Command-line generation
+
+```powershell
+python main.py
+```
+
+This creates the mod files in the `export` folder. Copy the generated mod folder
+into ZZMI's Mods folder to use it in the game.
+
+**Warning:** By default, generating the mod replaces the contents of the
+configured output folder.
 
 ## Planned Features
 > [!IMPORTANT]
