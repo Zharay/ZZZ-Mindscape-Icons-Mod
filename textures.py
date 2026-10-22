@@ -28,12 +28,32 @@ def source_stem(source_dir: str | Path, agent: str, skin_idx: int) -> str:
     return agent + skin + ("" if variant == "sources" else variant)
 
 
-def source_path(source_dir: str | Path, agent: str, skin_idx: int) -> Path:
+def is_chibi(source_dir: str | Path) -> bool:
+    return Path(source_dir).name.casefold() == "chibi"
+
+
+def source_path(
+    source_dir: str | Path, agent: str, skin_idx: int, kind: MaskKind | None = None,
+) -> Path:
+    if is_chibi(source_dir):
+        if kind is None:
+            raise ValueError("Chibi artwork requires a mask type.")
+        skin = "" if skin_idx == 0 else "Skin" + (str(skin_idx) if skin_idx > 1 else "")
+        return Path(source_dir) / f"{agent}{skin}-{kind}.png"
     return Path(source_dir) / (source_stem(source_dir, agent, skin_idx) + ".png")
 
 
-def resolve_source(source_dir: str | Path, agent: str, skin_idx: int) -> Path | None:
-    for path in (source_path(source_dir, agent, skin_idx), Path(source_dir) / f"{agent}.png"):
+def source_candidates(
+    source_dir: str | Path, agent: str, skin_idx: int, kind: MaskKind | None = None,
+) -> tuple[Path, Path]:
+    base = f"{agent}-{kind}.png" if is_chibi(source_dir) else f"{agent}.png"
+    return source_path(source_dir, agent, skin_idx, kind), Path(source_dir) / base
+
+
+def resolve_source(
+    source_dir: str | Path, agent: str, skin_idx: int, kind: MaskKind | None = None,
+) -> Path | None:
+    for path in source_candidates(source_dir, agent, skin_idx, kind):
         if path.is_file():
             return path
     return None
@@ -110,9 +130,13 @@ def _generate(
     kind: MaskKind, source_dir: str, dest: str, agent: str, skin_idx: int,
     offset: tuple[int, int], scale: float, rotation: float,
 ) -> None:
-    image = resolve_source(source_dir, agent, skin_idx)
+    image = resolve_source(source_dir, agent, skin_idx, kind)
     if image is None:
-        print(f"Source file {Path(source_dir) / (agent + '.png')} not found! Skipping...")
+        print(f"Source file {source_path(source_dir, agent, skin_idx, kind)} not found! Skipping...")
+        # Do not retain an obsolete override when CLEAN_EXPORTS is disabled.
+        output = Path(dest) / kind / (source_stem(source_dir, agent, skin_idx) + ".png")
+        if output.exists():
+            output.unlink()
         return
     spec = MASK_SPECS[kind]
     print(f"Creating {kind} for {source_stem(source_dir, agent, skin_idx)} "

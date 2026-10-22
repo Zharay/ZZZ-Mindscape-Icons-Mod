@@ -17,7 +17,7 @@ class ConfigTests(unittest.TestCase):
         self.settings = project(self.root)
 
     def test_defaults_and_round_trip(self):
-        self.assertEqual(load_config(self.root), DEFAULTS)
+        self.assertEqual(load_config(self.root), self.settings)
         (self.root / "config.json").unlink()
         with warnings.catch_warnings(record=True) as found:
             self.assertEqual(load_config(self.root), DEFAULTS)
@@ -51,7 +51,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_safe_export_paths(self):
         for path in (".", "..", str(Path.home()), self.root.anchor, "sources", "sources/M6/out",
-                     "masks", ".git/cache", "tests", "config.json", "screenshots/output"):
+                     "masks", ".git/cache", "tests", "config.json", "agents-chibi.json", "screenshots/output"):
             with self.subTest(path=path):
                 settings = deepcopy(DEFAULTS)
                 settings["EXPORT_DIR"] = path

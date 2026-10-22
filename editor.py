@@ -22,9 +22,116 @@ from editor_model import (
     valid_hash, validate_mask, validate_transform_image,
 )
 from masks import preview_mask
-from textures import MASK_SPECS, MaskKind, position_image, render_mask
+from textures import MASK_SPECS, MaskKind, is_chibi, position_image, render_mask
 
 USER_ERRORS = (ValueError, OSError, UnidentifiedImageError, Image.DecompressionBombError)
+
+DARK_THEME = {
+    "background": "#202124",
+    "surface": "#292a2d",
+    "field": "#303134",
+    "hover": "#3c4043",
+    "border": "#5f6368",
+    "foreground": "#e8eaed",
+    "muted": "#9aa0a6",
+    "disabled": "#777b80",
+    "accent": "#8ab4f8",
+    "selection": "#3c5a80",
+    "canvas": "#1e1e1e",
+}
+
+
+def apply_dark_theme(window: tk.Misc) -> None:
+    colors = DARK_THEME
+    window.configure(background=colors["background"])
+    style = ttk.Style(window)
+    if "clam" in style.theme_names():
+        style.theme_use("clam")
+
+    style.configure(
+        ".",
+        background=colors["background"],
+        foreground=colors["foreground"],
+        bordercolor=colors["border"],
+        lightcolor=colors["surface"],
+        darkcolor=colors["background"],
+        troughcolor=colors["surface"],
+    )
+    style.configure("TFrame", background=colors["background"])
+    style.configure("TLabel", background=colors["background"], foreground=colors["foreground"])
+    style.configure(
+        "TButton",
+        background=colors["surface"],
+        foreground=colors["foreground"],
+        padding=(8, 4),
+    )
+    style.map(
+        "TButton",
+        background=[
+            ("disabled", colors["field"]),
+            ("pressed", colors["selection"]),
+            ("active", colors["hover"]),
+        ],
+        foreground=[("disabled", colors["disabled"])],
+    )
+    style.configure(
+        "TEntry",
+        fieldbackground=colors["field"],
+        foreground=colors["foreground"],
+        insertcolor=colors["foreground"],
+    )
+    style.configure(
+        "TCombobox",
+        fieldbackground=colors["field"],
+        background=colors["surface"],
+        foreground=colors["foreground"],
+        arrowcolor=colors["foreground"],
+    )
+    style.map(
+        "TCombobox",
+        fieldbackground=[("readonly", colors["field"]), ("disabled", colors["surface"])],
+        background=[("active", colors["hover"]), ("disabled", colors["surface"])],
+        foreground=[("disabled", colors["disabled"])],
+    )
+    style.configure(
+        "Treeview",
+        background=colors["field"],
+        fieldbackground=colors["field"],
+        foreground=colors["foreground"],
+        rowheight=24,
+    )
+    style.map(
+        "Treeview",
+        background=[("selected", colors["selection"])],
+        foreground=[("selected", colors["foreground"])],
+    )
+    style.configure(
+        "Treeview.Heading",
+        background=colors["surface"],
+        foreground=colors["foreground"],
+    )
+    style.map("Treeview.Heading", background=[("active", colors["hover"])])
+    style.configure("TNotebook", background=colors["background"], borderwidth=0)
+    style.configure(
+        "TNotebook.Tab",
+        background=colors["surface"],
+        foreground=colors["foreground"],
+        padding=(10, 5),
+    )
+    style.map(
+        "TNotebook.Tab",
+        background=[("selected", colors["field"]), ("active", colors["hover"])],
+        foreground=[("disabled", colors["disabled"])],
+    )
+    style.configure("TCheckbutton", background=colors["background"], foreground=colors["foreground"])
+    style.configure("TScale", background=colors["background"], troughcolor=colors["surface"])
+    style.configure("TPanedwindow", background=colors["background"])
+    style.configure(
+        "TScrollbar",
+        background=colors["surface"],
+        troughcolor=colors["background"],
+        arrowcolor=colors["foreground"],
+    )
 
 
 def skin_label(index: int) -> str:
@@ -58,7 +165,9 @@ class Editor:
         self.masks: dict[MaskKind, Image.Image] = {}
         self.photos: list[ImageTk.PhotoImage] = []
         self.disabled_widgets: list[ttk.Widget] = []
+        self.reported_missing: set[tuple[str, str, int, MaskKind]] = set()
         self.window.title("Mindscape Icons editor")
+        apply_dark_theme(self.window)
         self.window.geometry("1200x920")
         self.window.minsize(1000, 780)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
@@ -84,6 +193,7 @@ class Editor:
         tree_area.pack(fill="both", expand=True, pady=4)
         self.tree = ttk.Treeview(tree_area, show="tree", selectmode="browse")
         self.tree.tag_configure("invalid_hash", foreground="red")
+        self.tree.tag_configure("missing_artwork", foreground="red")
         self.tree.pack(side="left", fill="both", expand=True)
         tree_scroll = ttk.Scrollbar(tree_area, orient="vertical", command=self.tree.yview)
         tree_scroll.pack(side="right", fill="y")
@@ -104,9 +214,10 @@ class Editor:
             values=draft.settings["SOURCE_DIRS"], state="readonly", width=35,
         )
         self.variants.pack(side="left", padx=5)
-        self.variants.bind("<<ComboboxSelected>>", lambda _: self.load_artwork())
+        self.active_variant = self.variant.get()
+        self.variants.bind("<<ComboboxSelected>>", self.change_variant)
         ttk.Button(source_row, text="Choose / Import Artwork", command=self.import_art).pack(side="left")
-        self.source_info = tk.StringVar(value="Artwork is shared across mask types; transforms are shared across variants.")
+        self.source_info = tk.StringVar(value="M3/M6 share transforms. Chibi has separate artwork and transforms for each mask.")
         ttk.Label(right, textvariable=self.source_info, wraplength=780).pack(anchor="w")
         hash_row = ttk.Frame(right)
         hash_row.pack(fill="x", pady=7)
@@ -154,12 +265,20 @@ class Editor:
         notebook.add(preview, text="Alignment + Output")
         self.preview_text = tk.StringVar(value="Select a mask to preview.")
         ttk.Label(preview, textvariable=self.preview_text, wraplength=780).pack(anchor="w")
-        self.canvas = tk.Canvas(preview, background="#333333", highlightthickness=0)
+        self.canvas = tk.Canvas(preview, background=DARK_THEME["canvas"], highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda _: self.schedule_preview())
         logs = ttk.Frame(notebook)
         notebook.add(logs, text="Generation Log")
         self.log = tk.Text(logs, wrap="word", state="disabled", height=15)
+        self.log.configure(
+            background=DARK_THEME["field"],
+            foreground=DARK_THEME["foreground"],
+            insertbackground=DARK_THEME["foreground"],
+            selectbackground=DARK_THEME["selection"],
+            selectforeground=DARK_THEME["foreground"],
+            highlightthickness=0,
+        )
         scrollbar = ttk.Scrollbar(logs, command=self.log.yview)
         scrollbar.pack(side="right", fill="y")
         self.log.configure(yscrollcommand=scrollbar.set)
@@ -266,11 +385,16 @@ class Editor:
 
     def refresh_labels(self) -> None:
         invalid_items: set[str] = set()
+        missing_items: set[str] = set()
+        source = self.variant.get()
+        agents = self.draft.agents_for(source)
+        saved_agents = self.draft.saved_chibi_agents if is_chibi(source) else self.draft.saved_agents
+        missing = self.report_missing_artwork().get(source, {})
         for item, (name, index, kind) in self.tree_items.items():
             if kind is None:
                 continue
-            entry = self.draft.agents[name][index].get(kind)
-            saved_skins = self.draft.saved_agents.get(name, [])
+            entry = agents[name][index].get(kind)
+            saved_skins = saved_agents.get(name, [])
             saved = saved_skins[index].get(kind) if index < len(saved_skins) else None
             self.tree.item(
                 item, text=kind + (" [missing: select to add]" if entry is None else "")
@@ -281,9 +405,49 @@ class Editor:
                 while node:
                     invalid_items.add(node)
                     node = self.tree.parent(node)
+            if (name, index, kind) in missing:
+                node = item
+                while node:
+                    missing_items.add(node)
+                    node = self.tree.parent(node)
         for item in self.tree_items:
-            self.tree.item(item, tags=("invalid_hash",) if item in invalid_items else ())
+            tags = []
+            if item in invalid_items:
+                tags.append("invalid_hash")
+            if item in missing_items:
+                tags.append("missing_artwork")
+            self.tree.item(item, tags=tags)
         self.update_title()
+
+    def report_missing_artwork(self) -> dict[str, dict[tuple[str, int, MaskKind], Path]]:
+        missing = {
+            source: self.draft.missing_artwork(source)
+            for source in self.draft.settings["SOURCE_DIRS"]
+        }
+        current: set[tuple[str, str, int, MaskKind]] = set()
+        warnings = []
+        for source, entries in missing.items():
+            for (name, index, kind), path in entries.items():
+                identity = (source, name, index, kind)
+                current.add(identity)
+                if identity not in self.reported_missing:
+                    warnings.append(f"WARNING: Missing artwork: {source} / {name} / {skin_label(index)} / {kind}: {path}")
+        self.reported_missing = current
+        if warnings:
+            self.append_log("\n".join(warnings) + "\n")
+        return missing
+
+    def change_variant(self, _: object = None) -> None:
+        source = self.variant.get()
+        self.variant.set(self.active_variant)
+        if not self.resolve_fields():
+            return
+        self.variant.set(source)
+        self.active_variant = source
+        if self.current is not None:
+            self.reset_fields()
+        else:
+            self.load_artwork()
 
     def select(self, _: object = None) -> None:
         if self.loading or self.running or not self.tree.selection():
@@ -309,7 +473,7 @@ class Editor:
         if self.running or self.current is None:
             return
         name, index, kind = self.current
-        entry = self.draft.agents[name][index].get(kind, DEFAULT_MASK)
+        entry = self.draft.agents_for(self.variant.get())[name][index].get(kind, DEFAULT_MASK)
         self.loading = True
         self.hash_value.set(entry["hash"])
         for key, value in zip(self.variables, (*entry["offset"], entry["scale"], entry["rotation"])):
@@ -353,18 +517,21 @@ class Editor:
         self.image = None
         if self.current is not None:
             try:
-                self.image, path = self.draft.artwork(self.variant.get(), *self.current[:2])
+                self.image, path = self.draft.artwork(self.variant.get(), *self.current)
                 staged = path in self.draft.imports
                 base = path.name == self.current[0] + ".png"
                 self.source_info.set(
                     str(path) + (" [staged import]" if staged else " [base artwork]" if base else "")
-                    + "\nShared across mask types. Transform is shared across variants."
+                    + ("\nChibi artwork and transforms are specific to this mask."
+                       if is_chibi(self.variant.get())
+                       else "\nShared across mask types. Transform is shared across M3/M6 variants.")
                 )
                 for name in ("x", "y"):
                     bound = max(self.image.size) * 2
                     self.sliders[name].configure(from_=-bound, to=bound)
             except USER_ERRORS as exc:
                 self.source_info.set(str(exc))
+        self.refresh_labels()
         self.schedule_preview()
 
     def schedule_preview(self) -> None:
@@ -503,17 +670,19 @@ class Editor:
             parent=self.window,
         )
         try:
-            name, index, _ = self.current
-            target = self.draft.target(self.variant.get(), name, index)
+            name, index, kind = self.current
+            target = self.draft.target(self.variant.get(), name, index, kind)
             if target.exists() or target in self.draft.imports:
                 if not messagebox.askyesno(
                     "Shared artwork replacement",
-                    f"Stage artwork for {target}?\nThis source is shared by every mask for this skin/variant.\n"
-                    "Different existing artwork is replaced only on Save.", parent=self.window,
+                    f"Stage artwork for {target}?\n"
+                    + ("This replaces artwork for this mask only.\n" if is_chibi(self.variant.get())
+                       else "This source is shared by every mask for this skin/variant.\n")
+                    + "Different existing artwork is replaced only on Save.", parent=self.window,
                 ):
                     return
             self.draft.stage_image(
-                self.variant.get(), name, index, Path(path), flip_vertical=flip_vertical,
+                self.variant.get(), name, index, Path(path), flip_vertical=flip_vertical, kind=kind,
             )
             self.load_artwork()
             self.update_title()
@@ -578,6 +747,8 @@ class Editor:
         self.form_original = ()
         self.variants.configure(values=draft.settings["SOURCE_DIRS"])
         self.variant.set(draft.settings["SOURCE_DIRS"][0])
+        self.active_variant = self.variant.get()
+        self.reported_missing.clear()
         self.masks.clear()
         self.rebuild_tree()
         self.load_artwork()
@@ -709,6 +880,7 @@ class ConfigDialog:
     def __init__(self, editor: Editor):
         self.editor = editor
         self.window = tk.Toplevel(editor.window)
+        self.window.configure(background=DARK_THEME["background"])
         self.window.title("editor - Edit Config")
         self.window.transient(editor.window)
         self.window.grab_set()
@@ -748,7 +920,17 @@ class ConfigDialog:
             ttk.Label(frame, text=descriptions[key]).grid(row=row, column=2, sticky="w")
             row += 1
         ttk.Label(frame, text="SOURCE_DIRS\n(ordered)").grid(row=row, column=0, sticky="nw")
-        self.sources = tk.Listbox(frame, height=5, exportselection=False, width=40)
+        self.sources = tk.Listbox(
+            frame,
+            height=5,
+            exportselection=False,
+            width=40,
+            background=DARK_THEME["field"],
+            foreground=DARK_THEME["foreground"],
+            selectbackground=DARK_THEME["selection"],
+            selectforeground=DARK_THEME["foreground"],
+            highlightthickness=0,
+        )
         for source in editor.draft.settings["SOURCE_DIRS"]:
             self.sources.insert("end", source)
         self.sources.grid(row=row, column=1, sticky="ew", padx=8)
@@ -820,7 +1002,11 @@ class ConfigDialog:
             self.editor.variants.configure(values=sources)
             if self.editor.variant.get() not in sources:
                 self.editor.variant.set(sources[0])
-            self.editor.load_artwork()
+            self.editor.active_variant = self.editor.variant.get()
+            if self.editor.current is not None:
+                self.editor.reset_fields()
+            else:
+                self.editor.load_artwork()
             self.editor.update_title()
             self.editor.status.set("Configuration applied to draft; Save to persist.")
             self.window.destroy()

@@ -1,6 +1,8 @@
-# ZZZ Mindscape Icons Mod
+# ZZZ Mindscape Icons Mod and Editor
+This a is a fork of the [ZZZ Mindscape Icons Mod](https://github.com/brewffee/ZZZ-Mindscape-Icons-Mod/) that takes the base concept made by brewffee and gives it an editor and generation options. 
+
 This mod replaces most instances of Zenless Zone Zero's agent icons with their Mindscape artworks. For the mod download,
-see [releases](https://github.com/brewffee/ZZZ-Mindscape-Icons-Mod/releases).
+see [releases](releases).
 
 Included in the repository are the Python generator and a visual `editor.py` desktop tool.
 Agent image properties and game texture hashes are stored in `agents.json`, source
@@ -9,7 +11,7 @@ artwork is in `sources`, and generator settings are in `config.json`.
 ![The agent selection screen with Mindscape icons enabled](screenshots/selection.png)
 
 ## Installation
-The latest version of this mod can be found in the [releases](https://github.com/brewffee/ZZZ-Mindscape-Icons-Mod/releases) 
+The latest version of this mod can be found in the [releases](releases)
 page.
 
 ## Screenshots
@@ -40,11 +42,16 @@ save your changes. When you're ready, choose **Generate Mod** to create the file
 for the game. If you have unsaved changes, the editor will ask whether to save
 them first.
 
-An image is shared across that agent's icon shapes, so changing it may affect
-more than one screen. Check the previews before generating the mod.
 When importing artwork, the editor asks whether to flip it vertically. Choose
 Yes when your image is right-side up so that the resulting mod is correctly
 orientated.
+
+M3 and M6 images are shared across an agent's icon shapes. Chibi uses a separate
+image for each shape, with its own adjustments. Check the previews before generating the mod.
+
+Agents with missing artwork appear red for the selected variant. Details are
+listed in **Generation Log**, without pop-ups. Missing icons keep the game's
+original artwork. In game, **Ctrl+Space** switches between M6, M3, and Chibi.
 
 ### Edit configuration
 
@@ -64,19 +71,3 @@ into ZZMI's Mods folder to use it in the game.
 
 **Warning:** By default, generating the mod replaces the contents of the
 configured output folder.
-
-## Planned Features
-> [!IMPORTANT]
-> While I would like to implement these soon, the resources for these screens 
-> are used in many different places of the game. Replacing these resources
-> would require a lot of additional work and possibly a rewrite of the 
-> generator, nor could I guarantee these replacements will function
-> correctly across game updates.
-
-I plan to support additional sections in the future, including:
-- [ ] Character Selection screen portraits
-- [ ] Agent Trust screen icons
-- [ ] Agent Display portraits
-- [ ] Preset Config icons
-
-If you have the hashes for these, please let me know by creating an [issue](https://github.com/brewffee/ZZZ-Mindscape-Icons-Mod/issues/new)!!!

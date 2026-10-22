@@ -1,12 +1,16 @@
 {
   "MOD_NAME": "Mindscape Icons",
-  "MOD_VERSION": "3.3",
+  "MOD_VERSION": "3.4",
   "CUR_AGENT": null,
-  "SOURCE_DIRS": ["sources/M6", "sources/M3"],
   "EXPORT_DIR": "export",
   "FALLBACK_MODE": "original",
   "CLEAN_EXPORTS": true,
   "SEPARATE_INIS": true,
   "CONTRAST_MULTIPLIER": 1.0,
-  "SATURATION_MULTIPLIER": 1.2
+  "SATURATION_MULTIPLIER": 1.2,
+  "SOURCE_DIRS": [
+    "sources/M6",
+    "sources/M3",
+    "sources/Chibi"
+  ]
 }

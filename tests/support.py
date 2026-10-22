@@ -14,6 +14,7 @@ def entry(hash_value="1234abcd"):
 
 def project(root: Path, scripts=False):
     settings = deepcopy(DEFAULTS)
+    settings["SOURCE_DIRS"] = ["sources/M6", "sources/M3"]
     (root / "config.json").write_text(json.dumps(settings), encoding="utf-8")
     (root / "agents.json").write_text(
         json.dumps({"Alice": [{"select": entry(), "tab": entry("2345bcde"), "round": entry("3456cdef")}]}),

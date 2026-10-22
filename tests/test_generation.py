@@ -95,6 +95,93 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse((self.root / "masks").exists())
         self.assertTrue((self.root / "agents.json").is_file())
 
+    def test_chibi_pipeline_three_inis_mask_artwork_and_transforms(self):
+        draft = Draft(self.root)
+        settings = deepcopy(draft.settings)
+        settings["SOURCE_DIRS"].append("sources/Chibi")
+        settings["SATURATION_MULTIPLIER"] = 1
+        draft.set_settings(settings)
+        draft.add_skin("Alice")
+        draft.agents["Alice"][1] = deepcopy(draft.agents["Alice"][0])
+        draft.save()
+        # Exercise generator initialization independently of editor persistence.
+        (self.root / "agents-chibi.json").unlink()
+        directory = self.root / "sources" / "Chibi"
+        directory.mkdir()
+        colors = {"select": (255, 0, 0, 255), "tab": (0, 255, 0, 255), "round": (0, 0, 255, 255)}
+        for kind, color in colors.items():
+            Image.new("RGBA", (80, 90), color).save(directory / f"Alice-{kind}.png")
+        Image.new("RGBA", (80, 90), "yellow").save(directory / "AliceSkin-select.png")
+        result = self.run_pipeline()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        chibi = json.loads((self.root / "agents-chibi.json").read_text())
+        self.assertEqual(chibi["Alice"][0]["select"], {
+            "hash": "1234abcd", "offset": [0, 0], "scale": 1.0, "rotation": 0,
+        })
+        mod = self.root / "export" / "Mindscape Icons"
+        self.assertEqual(len(list(mod.glob("*.ini"))), 3)
+        for kind, color in colors.items():
+            text = (mod / f"MindscapeIcons_{kind.capitalize()}.ini").read_text()
+            self.assertIn("$variant = 0,1,2", text)
+            self.assertIn("if $variant == 2", text)
+            self.assertIn(f"filename = {kind}/AliceChibi.png", text)
+            self.assertIn(f"filename = {kind}/AliceSkinChibi.png", text)
+            with Image.open(mod / kind / "AliceChibi.png") as image:
+                self.assertEqual(image.getpixel((image.width // 2, image.height // 2)), color)
+        with Image.open(mod / "select" / "AliceSkinChibi.png") as image:
+            self.assertEqual(image.getpixel((256, 250)), (255, 255, 0, 255))
+        # Preserve separate transforms and ensure non-clean generation cannot
+        # resurrect a removed image via a stale exported PNG.
+        draft = Draft(self.root)
+        draft.chibi_agents["Alice"][0]["select"]["offset"] = [1000, 0]
+        draft.settings["CLEAN_EXPORTS"] = False
+        draft.save()
+        (directory / "Alice-tab.png").unlink()
+        result = self.run_pipeline()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with Image.open(mod / "select" / "AliceChibi.png") as image:
+            self.assertEqual(image.getchannel("A").getextrema(), (0, 0))
+        text = (mod / "MindscapeIcons_Tab.ini").read_text()
+        self.assertNotIn("AliceChibiTab", text)
+        self.assertFalse((mod / "tab" / "AliceChibi.png").exists())
+
+    def test_missing_variants_keep_global_indices_even_with_one_resource(self):
+        draft = Draft(self.root)
+        draft.settings["SOURCE_DIRS"].append("sources/Chibi")
+        draft.save()
+        (self.root / "sources" / "M6" / "Alice.png").unlink()
+        directory = self.root / "sources" / "Chibi"
+        directory.mkdir()
+        Image.new("RGBA", (80, 90), "red").save(directory / "Alice-select.png")
+        result = self.run_pipeline()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        mod = self.root / "export" / "Mindscape Icons"
+        for kind in ("Select", "Tab", "Round"):
+            text = (mod / f"MindscapeIcons_{kind}.ini").read_text()
+            self.assertIn("if $variant == 1", text)
+            self.assertNotIn("if $variant == 0", text)
+            self.assertEqual("if $variant == 2" in text, kind == "Select")
+            self.assertNotIn("filename = " + kind.lower() + "/AliceM6.png", text)
+
+    def test_chibi_only_variant_and_combined_ini(self):
+        draft = Draft(self.root)
+        draft.settings["SOURCE_DIRS"] = ["sources/Chibi"]
+        draft.settings["SEPARATE_INIS"] = False
+        draft.save()
+        directory = self.root / "sources" / "Chibi"
+        directory.mkdir()
+        Image.new("RGBA", (80, 90), "red").save(directory / "Alice-round.png")
+        result = self.run_pipeline()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        mod = self.root / "export" / "Mindscape Icons"
+        self.assertEqual(len(list(mod.glob("*.ini"))), 1)
+        text = (mod / "MindscapeIcons.ini").read_text()
+        self.assertNotIn("[KeySwapVariant]", text)
+        self.assertNotIn("$variant", text)
+        self.assertIn("filename = round/AliceChibi.png", text)
+        self.assertNotIn("[TextureOverrideAliceSelect]", text)
+        self.assertNotIn("[TextureOverrideAliceTab]", text)
+
     def test_cleanup_and_missing_sources_are_visible(self):
         export = self.root / "export"
         export.mkdir()
@@ -183,6 +270,57 @@ class GuiTests(unittest.TestCase):
         self.editor.current = ("Alice", 0, kind)
         self.editor.reset_fields()
         self.window.update()
+
+    def test_missing_artwork_log_tags_variant_switch_and_import(self):
+        editor = self.editor
+        editor.draft.settings["SOURCE_DIRS"].append("sources/Chibi")
+        editor.variants.configure(values=editor.draft.settings["SOURCE_DIRS"])
+        self.select_mask()
+        with patch("editor.messagebox.showwarning") as warning, patch("editor.messagebox.showerror") as error:
+            editor.variant.set("sources/Chibi")
+            editor.change_variant()
+            self.window.update()
+            self.assertEqual(editor.variables["scale"].get(), "1.0")
+            for item in editor.tree_items:
+                self.assertIn("missing_artwork", editor.tree.item(item, "tags"))
+            log = editor.log.get("1.0", "end")
+            self.assertIn("Alice-select.png", log)
+            self.assertIn("Alice-tab.png", log)
+            self.assertIn("Alice-round.png", log)
+            editor.refresh_labels()
+            self.assertEqual(editor.log.get("1.0", "end"), log)
+            art = self.root / "chibi.png"
+            Image.new("RGBA", (40, 40), "red").save(art)
+            with patch("editor.filedialog.askopenfilename", return_value=str(art)), patch(
+                "editor.messagebox.askyesno", return_value=False
+            ):
+                editor.import_art()
+            select_item = next(item for item, data in editor.tree_items.items() if data[2] == "select")
+            self.assertNotIn("missing_artwork", editor.tree.item(select_item, "tags"))
+            editor.variables["x"].set("25")
+            with patch("editor.messagebox.askyesnocancel", return_value=True):
+                editor.variant.set("sources/M6")
+                editor.change_variant()
+            self.assertEqual(editor.draft.chibi_agents["Alice"][0]["select"]["offset"], [25, 0])
+            self.assertEqual(editor.draft.agents["Alice"][0]["select"]["offset"], [0, 0])
+            self.assertEqual(editor.variables["scale"].get(), "0.7")
+            self.assertTrue(all("missing_artwork" not in editor.tree.item(item, "tags") for item in editor.tree_items))
+            (self.root / "sources" / "M3" / "Alice.png").unlink()
+            editor.variant.set("sources/M3")
+            editor.change_variant()
+            self.assertTrue(all("missing_artwork" in editor.tree.item(item, "tags") for item in editor.tree_items))
+            self.assertIn("sources/M3 / Alice", editor.log.get("1.0", "end"))
+            warning.assert_not_called()
+            error.assert_not_called()
+
+    def test_variant_switch_cancel_keeps_original_source_and_fields(self):
+        self.select_mask()
+        self.editor.variables["x"].set("12")
+        with patch("editor.messagebox.askyesnocancel", return_value=None):
+            self.editor.variant.set("sources/M3")
+            self.editor.change_variant()
+        self.assertEqual(self.editor.variant.get(), "sources/M6")
+        self.assertEqual(self.editor.variables["x"].get(), "12")
 
     def test_previews_flip_vertically_without_changing_inputs_or_rendering(self):
         from PIL import ImageTk

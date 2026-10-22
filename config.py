@@ -30,7 +30,7 @@ DEFAULTS: Settings = {
     "MOD_NAME": "Mindscape Icons",
     "MOD_VERSION": "3.3",
     "CUR_AGENT": None,
-    "SOURCE_DIRS": ["sources/M6", "sources/M3"],
+    "SOURCE_DIRS": ["sources/M6", "sources/M3", "sources/Chibi"],
     "EXPORT_DIR": "export",
     "FALLBACK_MODE": "original",
     "CLEAN_EXPORTS": True,
@@ -145,7 +145,7 @@ def validate_settings(value: object, root: Path = ROOT) -> Settings:
         root / "sources", root / "tests",
         *resolved,
         *(root / name for name in (
-            "agents.json", "config.json", "config.py", "editor.py", "editor_model.py",
+            "agents.json", "agents-chibi.json", "config.json", "config.py", "editor.py", "editor_model.py",
             "main.py", "agent_data.py", "textures.py", "masks.py", "README.md",
         )),
     ]

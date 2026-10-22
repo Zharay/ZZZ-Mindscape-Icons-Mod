@@ -19,7 +19,9 @@ from config import (
     ROOT, Settings, finite_number, load_config, read_json, resolve_path, safe_component,
     validate_settings,
 )
-from textures import MASK_SPECS, MaskKind, resolve_source, source_stem
+from textures import (
+    MASK_SPECS, MaskKind, is_chibi, resolve_source, source_candidates, source_path, source_stem,
+)
 
 
 class MaskEntry(TypedDict):
@@ -141,6 +143,31 @@ def duplicate_hashes(agents: Agents) -> list[str]:
     return [f"{key}: {', '.join(entries)}" for key, entries in hashes.items() if len(entries) > 1]
 
 
+def sync_chibi(agents: Agents, stored: Agents) -> Agents:
+    result: Agents = {}
+    for name, skins in agents.items():
+        result[name] = []
+        for index, skin in enumerate(skins):
+            previous = stored.get(name, [])
+            result[name].append({
+                kind: {
+                    **deepcopy(previous[index].get(kind, DEFAULT_MASK) if index < len(previous) else DEFAULT_MASK),
+                    "hash": entry["hash"],
+                }
+                for kind, entry in skin.items()
+            })
+    return result
+
+
+def load_chibi(root: Path, agents: Agents, settings: Settings) -> Agents:
+    path = root / "agents-chibi.json"
+    if path.exists():
+        validation_settings = deepcopy(settings)
+        validation_settings["CUR_AGENT"] = None
+        return validate_agents(read_json(path), validation_settings, root)
+    return sync_chibi(agents, {})
+
+
 def hash_from_filename(path: str | Path) -> str:
     matches = re.findall(r"(?<![A-Za-z0-9])[a-fA-F0-9]{8}(?![A-Za-z0-9])", Path(path).stem)
     if len(matches) != 1:
@@ -192,10 +219,13 @@ class Draft:
             name: loaded_agents[name] for name in ordered_names
         }
         self.saved_agents = deepcopy(self.agents)
+        self.chibi_agents = load_chibi(self.root, self.agents, self.settings)
+        self.saved_chibi_agents = deepcopy(self.chibi_agents)
+        self.chibi_agents = sync_chibi(self.agents, self.chibi_agents)
         self.saved_settings = deepcopy(self.settings)
         self.originals: dict[Path, bytes | None] = {
             self.root / name: file_bytes(self.root / name)
-            for name in ("agents.json", "config.json")
+            for name in ("agents.json", "agents-chibi.json", "config.json")
         }
         self.imports: dict[Path, Image.Image] = {}
 
@@ -204,40 +234,51 @@ class Draft:
         return bool(
             self.imports or self._hash_repairs_pending or self._agent_order_repair_pending
             or self.agents != self.saved_agents
+            or self.agents_for("Chibi") != self.saved_chibi_agents
+            or (any(is_chibi(source) for source in self.settings["SOURCE_DIRS"])
+                and self.originals[self.root / "agents-chibi.json"] is None)
             or self.settings != self.saved_settings
         )
+
+    def agents_for(self, source: str) -> Agents:
+        if is_chibi(source):
+            self.chibi_agents = sync_chibi(self.agents, self.chibi_agents)
+            return self.chibi_agents
+        return self.agents
 
     def validate(self) -> None:
         validate_settings(self.settings, self.root)
         validate_agents(self.agents, self.settings, self.root)
+        validate_agents(self.agents_for("Chibi"), self.settings, self.root)
         for path in self.imports:
             if path not in self.import_targets(self.settings):
                 raise ValueError(f"Resolve or discard staged import before changing its directory: {path}")
-        for name, skins in self.agents.items():
-            for index, skin in enumerate(skins):
-                for source in self.settings["SOURCE_DIRS"]:
-                    target = self.target(source, name, index)
-                    path = resolve_source(self.root / source, name, index)
-                    if target in self.imports:
-                        image = self.imports[target]
-                        for entry in skin.values():
-                            validate_transform_image(entry, image)
-                    elif path is not None:
-                        with Image.open(path) as image:
-                            for entry in skin.values():
+        for source in self.settings["SOURCE_DIRS"]:
+            for name, skins in self.agents_for(source).items():
+                for index, skin in enumerate(skins):
+                    for kind in MASK_SPECS:
+                        if kind not in skin:
+                            continue
+                        entry = skin[kind]
+                        path = self.artwork_path(source, name, index, kind)
+                        if path in self.imports:
+                            validate_transform_image(entry, self.imports[path])
+                        elif path is not None:
+                            with Image.open(path) as image:
                                 validate_transform_image(entry, image)
 
     def import_targets(self, settings: Settings) -> set[Path]:
         return {
-            self.target(source, name, index)
+            self.target(source, name, index, kind)
             for source in settings["SOURCE_DIRS"]
             for name, skins in self.agents.items()
             for index in range(len(skins))
+            for kind in MASK_SPECS
         }
 
-    def target(self, source: str, name: str, index: int) -> Path:
+    def target(self, source: str, name: str, index: int, kind: MaskKind | None = None) -> Path:
         directory = resolve_path(self.root, source)
-        raw = self.root / source / (source_stem(source, name, index) + ".png")
+        raw = source_path(self.root / source, name, index, kind)
         if raw.is_symlink():
             raise ValueError(f"Artwork destination is a symbolic link; replace it manually first: {raw}")
         target = raw.resolve()
@@ -267,26 +308,46 @@ class Draft:
         self.agents = candidate
         return len(candidate[name]) - 1
 
-    def artwork(self, source: str, name: str, index: int) -> tuple[Image.Image, Path]:
-        target = self.target(source, name, index)
-        if target in self.imports:
-            return self.imports[target], target
-        path = resolve_source(self.root / source, name, index)
+    def artwork_path(
+        self, source: str, name: str, index: int, kind: MaskKind | None = None,
+    ) -> Path | None:
+        for raw in source_candidates(self.root / source, name, index, kind):
+            path = raw.resolve()
+            if path in self.imports or raw.is_file():
+                if path.parent != resolve_path(self.root, source):
+                    raise ValueError(f"Source symlink points outside configured directory: {path}")
+                return path
+        return None
+
+    def artwork(
+        self, source: str, name: str, index: int, kind: MaskKind | None = None,
+    ) -> tuple[Image.Image, Path]:
+        path = self.artwork_path(source, name, index, kind)
         if path is None:
-            raise ValueError(f"No source for {name}/skin {index} in {source}. Import artwork first.")
-        path = path.resolve()
-        if path.parent != resolve_path(self.root, source):
-            raise ValueError(f"Source symlink points outside configured directory: {path}")
+            raise ValueError(f"No source for {name}/skin {index}/{kind} in {source}. Import artwork first.")
+        if path in self.imports:
+            return self.imports[path], path
         return decode_image(path), path
+
+    def missing_artwork(self, source: str) -> dict[tuple[str, int, MaskKind], Path]:
+        missing: dict[tuple[str, int, MaskKind], Path] = {}
+        for name, skins in self.agents_for(source).items():
+            for index, skin in enumerate(skins):
+                for kind in MASK_SPECS:
+                    if kind in skin and self.artwork_path(source, name, index, kind) is None:
+                        missing[name, index, kind] = self.target(source, name, index, kind)
+        return missing
 
     def stage_image(
         self, source: str, name: str, index: int, path: Path, flip_vertical: bool = False,
+        kind: MaskKind | None = None,
     ) -> Path | None:
-        target = self.target(source, name, index)
+        target = self.target(source, name, index, kind)
         image = decode_image(path)
         if flip_vertical:
             image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-        resolved = resolve_source(self.root / source, name, index)
+        self.artwork_path(source, name, index, kind)
+        resolved = resolve_source(self.root / source, name, index, kind)
         if resolved is not None:
             existing = decode_image(resolved)
             if existing.size == image.size and existing.tobytes() == image.tobytes():
@@ -302,17 +363,27 @@ class Draft:
         if invalid_hash:
             entry["hash"] = BLANK_HASH
         validate_mask(entry)
-        image, _ = self.artwork(source, name, index)
-        validate_transform_image(entry, image)
+        path = self.artwork_path(source, name, index, kind)
+        if path is not None:
+            image, _ = self.artwork(source, name, index, kind)
+            validate_transform_image(entry, image)
         for variant in self.settings["SOURCE_DIRS"]:
-            target = self.target(variant, name, index)
-            path = resolve_source(self.root / variant, name, index)
-            if target in self.imports:
-                validate_transform_image(entry, self.imports[target])
+            if is_chibi(variant) != is_chibi(source):
+                continue
+            path = self.artwork_path(variant, name, index, kind)
+            if path in self.imports:
+                validate_transform_image(entry, self.imports[path])
             elif path is not None:
                 with Image.open(path) as variant_image:
                     validate_transform_image(entry, variant_image)
-        self.agents[name][index][kind] = entry
+        if is_chibi(source):
+            if kind not in self.agents[name][index]:
+                self.agents[name][index][kind] = {**deepcopy(DEFAULT_MASK), "hash": entry["hash"]}
+            else:
+                self.agents[name][index][kind]["hash"] = entry["hash"]
+            self.agents_for(source)[name][index][kind] = entry
+        else:
+            self.agents[name][index][kind] = entry
         if invalid_hash:
             self.hash_warnings.append(hash_warning(name, index, [kind]))
 
@@ -320,7 +391,7 @@ class Draft:
         self.imports.clear()
         self.originals = {
             path: content for path, content in self.originals.items()
-            if path.name in ("agents.json", "config.json") and path.parent == self.root
+            if path.name in ("agents.json", "agents-chibi.json", "config.json") and path.parent == self.root
         }
 
     def save(self) -> list[Path]:
@@ -338,6 +409,12 @@ class Draft:
             or self.agents != self.saved_agents
         ):
             writes[self.root / "agents.json"] = agent_json(self.agents)
+        chibi = self.agents_for("Chibi")
+        chibi_path = self.root / "agents-chibi.json"
+        if (
+            chibi_path.exists() or any(is_chibi(source) for source in self.settings["SOURCE_DIRS"])
+        ) and (self.originals[chibi_path] is None or chibi != self.saved_chibi_agents):
+            writes[chibi_path] = agent_json(chibi)
         if self.settings != self.saved_settings or self.originals[self.root / "config.json"] is None:
             if self.dirty:
                 writes[self.root / "config.json"] = (
@@ -392,6 +469,7 @@ class Draft:
         for path, content in writes.items():
             self.originals[path] = content
         self.saved_agents = deepcopy(self.agents)
+        self.saved_chibi_agents = deepcopy(self.chibi_agents)
         self._hash_repairs_pending = False
         self._agent_order_repair_pending = False
         self.saved_settings = deepcopy(self.settings)

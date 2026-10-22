@@ -86,3 +86,20 @@ class TextureTests(unittest.TestCase):
                 canonical = source_path(directory, "Alice", 2)
                 Image.new("RGBA", (3, 3)).save(canonical)
                 self.assertEqual(resolve_source(directory, "Alice", 2), canonical)
+
+    def test_chibi_mask_and_skin_sources(self):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td) / "Chibi"
+            directory.mkdir()
+            Image.new("RGBA", (2, 2)).save(directory / "Alice.png")
+            with self.assertRaisesRegex(ValueError, "mask type"):
+                source_path(directory, "Alice", 0)
+            for kind in MASK_SPECS:
+                self.assertIsNone(resolve_source(directory, "Alice", 0, kind))
+                base = directory / f"Alice-{kind}.png"
+                Image.new("RGBA", (2, 2)).save(base)
+                self.assertEqual(resolve_source(directory, "Alice", 2, kind), base)
+                canonical = source_path(directory, "Alice", 2, kind)
+                self.assertEqual(canonical.name, f"AliceSkin2-{kind}.png")
+                Image.new("RGBA", (3, 3)).save(canonical)
+                self.assertEqual(resolve_source(directory, "Alice", 2, kind), canonical)

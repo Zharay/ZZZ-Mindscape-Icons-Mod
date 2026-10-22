@@ -8,9 +8,9 @@ import os
 import shutil
 from pathlib import Path
 
-from config import MOD_NAME, MOD_VERSION, CUR_AGENT, SOURCE_DIRS, EXPORT_DIR, SEPARATE_INIS
+from config import MOD_NAME, MOD_VERSION, CUR_AGENT, SOURCE_DIRS, EXPORT_DIR, SEPARATE_INIS, load_config
 import textures
-from editor_model import Agents
+from editor_model import Agents, agent_json, load_chibi, sync_chibi
 
 HashType = Literal['Select', 'Tab', 'Round']
 
@@ -26,24 +26,24 @@ def create_texture_override(agent: str, skin_idx: int, source_dirs: list[str], h
         skin_str = "Skin" + (str(skin_idx) if skin_idx > 1 else "")
 
     available_resources = []
-    for source_dir in source_dirs:
+    for index, source_dir in enumerate(source_dirs):
         variant = Path(source_dir).name
         if variant == "sources":
             variant = ""
 
         file_name = f"{kind.lower()}/{agent}{skin_str}{variant}.png"
-        if os.path.exists(f"{EXPORT_DIR}/{MOD_NAME}/{file_name}"):
-            available_resources.append((source_dir, variant, file_name))
+        if (
+            textures.resolve_source(source_dir, agent, skin_idx, typing.cast(textures.MaskKind, kind.lower())) is not None
+            and os.path.exists(f"{EXPORT_DIR}/{MOD_NAME}/{file_name}")
+        ):
+            available_resources.append((index, variant, file_name))
 
     # agent has no data to override
     if not available_resources:
         return ""
 
-    # first avaiable resource
-    fallback_source, fallback_variant, fallback_file = available_resources[0]
-
     # multiple resource mode (toggles)
-    if len(available_resources) > 1:
+    if len(source_dirs) > 1:
         override_string = dedent(f"""
             [TextureOverride{agent}{skin_str}{kind}]
             hash = {hash_value}
@@ -52,12 +52,12 @@ def create_texture_override(agent: str, skin_idx: int, source_dirs: list[str], h
 
         resource_string = ""
 
-        for i, (source_dir, variant, file_name) in enumerate(
+        for i, (variant_index, variant, file_name) in enumerate(
                 available_resources):
             resource_name = f"{agent}{skin_str}{variant}{kind}"
 
             override_string += dedent(f"""\
-                   {"\telse " if i > 0 else "\t"}if $variant == {i}
+                   {"\telse " if i > 0 else "\t"}if $variant == {variant_index}
                             this = Resource{resource_name}
                     """)
 
@@ -70,7 +70,7 @@ def create_texture_override(agent: str, skin_idx: int, source_dirs: list[str], h
         return override_string + resource_string
     else:
         # single resource mode (no toggles)
-        source_dir, variant, file_name = available_resources[0]
+        variant_index, variant, file_name = available_resources[0]
         return dedent(f"""        
             [TextureOverride{agent}{skin_str}{kind}]
             hash = {hash_value}
@@ -121,6 +121,12 @@ def gen_textures() -> None:
         os.makedirs(export_dir)
 
     agents_to_process = {CUR_AGENT: agent_dict[CUR_AGENT]} if CUR_AGENT else agent_dict
+    stored_chibi = load_chibi(Path.cwd(), agent_dict, load_config())
+    chibi_agents = sync_chibi(agent_dict, stored_chibi)
+    if any(textures.is_chibi(source) for source in SOURCE_DIRS):
+        chibi_path = Path("agents-chibi.json")
+        if not chibi_path.exists() or chibi_agents != stored_chibi:
+            chibi_path.write_bytes(agent_json(chibi_agents))
 
     skin_generators = {
         'select': textures.gen_select,
@@ -135,11 +141,11 @@ def gen_textures() -> None:
         for i, skin in enumerate(skins):
             for skin_type, generator in skin_generators.items():
                 if skin.get(skin_type, {}).get('hash'):
-                    entry = skin[skin_type]
-                    offset = entry['offset']
-                    scale = entry['scale']
-                    rotation = entry['rotation']
                     for source_dir in SOURCE_DIRS:
+                        entry = (chibi_agents if textures.is_chibi(source_dir) else agent_dict)[name][i][skin_type]
+                        offset = (entry['offset'][0], entry['offset'][1])
+                        scale = entry['scale']
+                        rotation = entry['rotation']
                         generator(source_dir, fallback_dir, export_dir, name, i, offset, scale, rotation)
     print("")
 

@@ -10,7 +10,7 @@ from tkinter import ttk
 
 from PIL import Image
 
-from editor import Editor
+from editor import DARK_THEME, Editor, apply_dark_theme
 from editor_model import (
     BLANK_HASH, Draft, duplicate_hashes, hash_from_filename, validate_mask,
     validate_transform_image,
@@ -37,6 +37,98 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(self.draft.save(), [])
         self.assertEqual((self.root / "agents.json").read_bytes(), original)
         self.assertEqual(list(self.root.rglob("*.bak")), [])
+
+    def enable_chibi(self):
+        settings = deepcopy(self.draft.settings)
+        settings["SOURCE_DIRS"].append("sources/Chibi")
+        self.draft.set_settings(settings)
+
+    def test_chibi_defaults_save_and_independent_transforms(self):
+        self.enable_chibi()
+        self.draft.add_skin("Alice")
+        self.draft.agents["Alice"][1] = {"select": entry("abcdef12")}
+        original = deepcopy(self.draft.agents)
+        chibi = self.draft.agents_for("sources/Chibi")
+        for index, skin in enumerate(chibi["Alice"]):
+            for kind, mask in skin.items():
+                self.assertEqual(mask, {
+                    "hash": original["Alice"][index][kind]["hash"],
+                    "offset": [0, 0], "scale": 1.0, "rotation": 0,
+                })
+        self.assertFalse((self.root / "agents-chibi.json").exists())
+        adjusted = {**entry(), "offset": [12, -30], "rotation": 90, "scale": 1.5}
+        # Missing artwork must not prevent editing hashes and transforms.
+        self.draft.apply_mask("Alice", 0, "select", adjusted, "sources/Chibi")
+        self.assertEqual(self.draft.agents, original)
+        self.draft.save()
+        loaded = Draft(self.root)
+        self.assertEqual(loaded.agents, original)
+        self.assertEqual(loaded.agents_for("sources/Chibi")["Alice"][0]["select"], adjusted)
+        self.assertFalse(loaded.dirty)
+        self.assertEqual(loaded.save(), [])
+
+    def test_chibi_uses_canonical_hashes_and_tracks_structure_changes(self):
+        self.enable_chibi()
+        self.draft.apply_mask("Alice", 0, "tab", entry("abcdef12"), "sources/Chibi")
+        self.assertEqual(self.draft.agents["Alice"][0]["tab"]["hash"], "abcdef12")
+        self.draft.agents["Alice"][0]["select"]["hash"] = "abcdef34"
+        self.draft.agents["Alice"][0].pop("round")
+        self.draft.add_skin("Alice")
+        self.draft.agents["Alice"][1] = {"round": entry("abcdef56")}
+        self.draft.add_agent("Bob")
+        self.draft.save()
+        data = json.loads((self.root / "agents-chibi.json").read_text())
+        self.assertEqual(data["Alice"][0]["select"]["hash"], "abcdef34")
+        self.assertNotIn("round", data["Alice"][0])
+        self.assertEqual(data["Alice"][1]["round"]["scale"], 1.0)
+        self.assertEqual(data["Bob"], [{}])
+        # Hashes are authoritative in agents.json, even after external edits.
+        data["Alice"][0]["select"]["hash"] = "11111111"
+        data["Alice"][0]["select"]["offset"] = [3, 4]
+        (self.root / "agents-chibi.json").write_text(json.dumps(data))
+        loaded = Draft(self.root)
+        self.assertEqual(loaded.agents_for("Chibi")["Alice"][0]["select"]["hash"], "abcdef34")
+        self.assertEqual(loaded.agents_for("Chibi")["Alice"][0]["select"]["offset"], [3, 4])
+        self.assertTrue(loaded.dirty)
+        loaded.save()
+        saved = json.loads((self.root / "agents-chibi.json").read_text())
+        self.assertEqual(saved["Alice"][0]["select"]["hash"], "abcdef34")
+        self.assertFalse(Draft(self.root).dirty)
+
+    def test_chibi_imports_missing_artwork_and_skin_fallbacks(self):
+        self.enable_chibi()
+        self.draft.add_skin("Alice")
+        self.draft.agents["Alice"][1] = {"select": entry()}
+        self.assertEqual(len(self.draft.missing_artwork("sources/Chibi")), 4)
+        target = self.draft.stage_image("sources/Chibi", "Alice", 0, self.artwork(), kind="select")
+        self.assertEqual(target.name, "Alice-select.png")
+        self.assertEqual(len(self.draft.missing_artwork("sources/Chibi")), 2)
+        self.assertEqual(self.draft.artwork("sources/Chibi", "Alice", 1, "select")[1], target)
+        self.draft.discard_imports()
+        self.assertEqual(len(self.draft.missing_artwork("sources/Chibi")), 4)
+        self.draft.stage_image("sources/Chibi", "Alice", 1, self.artwork(), kind="select")
+        self.draft.save()
+        loaded = Draft(self.root)
+        self.assertEqual(loaded.artwork("sources/Chibi", "Alice", 1, "select")[1].name, "AliceSkin-select.png")
+        self.assertEqual(len(loaded.missing_artwork("sources/Chibi")), 3)
+        self.assertEqual(loaded.missing_artwork("sources/M6"), {})
+        (self.root / "sources" / "M6" / "Alice.png").unlink()
+        self.assertEqual(len(loaded.missing_artwork("sources/M6")), 4)
+
+    def test_chibi_save_conflict_and_rollback(self):
+        self.enable_chibi()
+        original = (self.root / "config.json").read_bytes()
+        with patch("editor_model.os.replace", side_effect=OSError("Injected failure")):
+            with self.assertRaisesRegex(ValueError, "Save failed"):
+                self.draft.save()
+        self.assertFalse((self.root / "agents-chibi.json").exists())
+        self.assertEqual((self.root / "config.json").read_bytes(), original)
+        self.draft.save()
+        self.draft.chibi_agents["Alice"][0]["select"]["offset"] = [2, 3]
+        path = self.root / "agents-chibi.json"
+        path.write_text(path.read_text() + "\n")
+        with self.assertRaisesRegex(ValueError, "changed outside"):
+            self.draft.save()
 
     def test_load_replaces_invalid_hashes_and_saves_repairs(self):
         path = self.root / "agents.json"
@@ -217,8 +309,24 @@ class DraftTests(unittest.TestCase):
         editor.current = None
         editor.search = Mock()
         editor.search.get.return_value = ""
+        editor.variant = Mock()
+        editor.variant.get.return_value = "sources/M6"
+        editor.reported_missing = set()
         editor.update_title = Mock()
         return editor
+
+    def test_editor_dark_theme_uses_dark_widget_colors(self):
+        window = tk.Tk()
+        window.withdraw()
+        self.addCleanup(window.destroy)
+
+        apply_dark_theme(window)
+        style = ttk.Style(window)
+
+        self.assertEqual(window.cget("background"), DARK_THEME["background"])
+        self.assertEqual(style.lookup("TFrame", "background"), DARK_THEME["background"])
+        self.assertEqual(style.lookup("TEntry", "fieldbackground"), DARK_THEME["field"])
+        self.assertEqual(style.lookup("Treeview", "background"), DARK_THEME["field"])
 
     def tree_tags(self, editor):
         return {
