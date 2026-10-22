@@ -1,15 +1,18 @@
 import json
 import os
 import tempfile
+import tkinter as tk
 import unittest
 from copy import deepcopy
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from tkinter import ttk
 
 from PIL import Image
 
+from editor import Editor
 from editor_model import (
-    Draft, duplicate_hashes, hash_from_filename, validate_mask,
+    BLANK_HASH, Draft, duplicate_hashes, hash_from_filename, validate_mask,
     validate_transform_image,
 )
 from support import entry, project
@@ -34,6 +37,213 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(self.draft.save(), [])
         self.assertEqual((self.root / "agents.json").read_bytes(), original)
         self.assertEqual(list(self.root.rglob("*.bak")), [])
+
+    def test_load_replaces_invalid_hashes_and_saves_repairs(self):
+        path = self.root / "agents.json"
+        agents = {
+            "Alice": [
+                {"select": entry("bad"), "tab": entry(None), "round": entry("ABCDEF12")},
+                {"select": entry(12345678)},
+                {"round": entry("gggggggg")},
+            ],
+            "Bob": [{"tab": entry("")}],
+        }
+        path.write_text(json.dumps(agents), encoding="utf-8")
+        original = path.read_bytes()
+        draft = Draft(self.root)
+        self.assertEqual(draft.hash_warnings, [
+            "Alice / base: select, tab", "Alice / skin1: select",
+            "Alice / skin2: round", "Bob / base: tab",
+        ])
+        self.assertEqual(draft.agents["Alice"][0]["round"]["hash"], "ABCDEF12")
+        for name, index, kind in (
+            ("Alice", 0, "select"), ("Alice", 0, "tab"), ("Alice", 1, "select"),
+            ("Alice", 2, "round"), ("Bob", 0, "tab"),
+        ):
+            self.assertEqual(draft.agents[name][index][kind]["hash"], BLANK_HASH)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertTrue(draft.dirty)
+        draft.hash_warnings.clear()
+        self.assertTrue(draft.dirty)
+        backups = draft.save()
+        self.assertEqual(backups[0].read_bytes(), original)
+        self.assertEqual(json.loads(path.read_bytes()), draft.agents)
+        loaded = Draft(self.root)
+        self.assertEqual(loaded.hash_warnings, [])
+        self.assertFalse(loaded.dirty)
+
+    def test_save_replaces_invalid_hashes_and_preserves_other_edits(self):
+        self.draft.agents["Alice"][0]["select"]["hash"] = "not hex"
+        self.draft.agents["Alice"][0]["tab"]["hash"] = ""
+        self.draft.agents["Alice"][0]["round"]["offset"] = [10, -20]
+        self.draft.save()
+        self.assertEqual(self.draft.hash_warnings, ["Alice / base: select, tab"])
+        loaded = Draft(self.root)
+        self.assertEqual(loaded.agents["Alice"][0]["select"]["hash"], BLANK_HASH)
+        self.assertEqual(loaded.agents["Alice"][0]["tab"]["hash"], BLANK_HASH)
+        self.assertEqual(loaded.agents["Alice"][0]["round"]["offset"], [10, -20])
+        self.assertFalse(self.draft.dirty)
+
+    def test_hash_repair_does_not_hide_structural_errors(self):
+        path = self.root / "agents.json"
+        for field, value in (("offset", [1.5, 0]), ("scale", 0), ("rotation", "bad")):
+            with self.subTest(field=field):
+                invalid = entry("bad")
+                invalid[field] = value
+                path.write_text(json.dumps({"Alice": [{"select": invalid}]}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, field):
+                    Draft(self.root)
+        self.draft.agents["Alice"][0]["select"]["hash"] = "bad"
+        self.draft.agents["Alice"][0]["select"]["scale"] = 0
+        original = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "scale"):
+            self.draft.save()
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_apply_invalid_hash_uses_placeholder_without_mutating_input(self):
+        data = entry("invalid")
+        self.draft.apply_mask("Alice", 0, "select", data, "sources/M6")
+        self.assertEqual(data["hash"], "invalid")
+        self.assertEqual(self.draft.agents["Alice"][0]["select"]["hash"], BLANK_HASH)
+        self.assertEqual(self.draft.hash_warnings, ["Alice / base: select"])
+        self.draft.save()
+        self.assertEqual(Draft(self.root).agents, self.draft.agents)
+
+    def test_apply_still_rejects_missing_fields(self):
+        data = entry()
+        del data["hash"]
+        with self.assertRaisesRegex(ValueError, "expected hash"):
+            self.draft.apply_mask("Alice", 0, "select", data, "sources/M6")
+        self.assertEqual(self.draft.hash_warnings, [])
+
+    def test_failed_hash_repair_save_can_be_retried(self):
+        path = self.root / "agents.json"
+        original = path.read_bytes()
+        self.draft.agents["Alice"][0]["select"]["hash"] = "invalid"
+        with patch("editor_model.shutil.copy2", side_effect=OSError("No permission")):
+            with self.assertRaisesRegex(ValueError, "Save failed"):
+                self.draft.save()
+        self.assertEqual(path.read_bytes(), original)
+        self.assertTrue(self.draft.dirty)
+        self.draft.hash_warnings.clear()
+        self.draft.save()
+        self.assertFalse(self.draft.dirty)
+        self.assertEqual(Draft(self.root).agents["Alice"][0]["select"]["hash"], BLANK_HASH)
+
+    def test_blank_placeholders_do_not_trigger_duplicate_warnings(self):
+        self.draft.agents["Alice"][0]["select"]["hash"] = BLANK_HASH
+        self.draft.agents["Alice"][0]["tab"]["hash"] = BLANK_HASH
+        self.assertEqual(duplicate_hashes(self.draft.agents), [])
+
+    def editor(self):
+        editor = Editor.__new__(Editor)
+        editor.draft = self.draft
+        editor.window = Mock()
+        editor.append_log = Mock()
+        editor.hash_value = Mock()
+        editor.hash_value.get.return_value = "invalid"
+        editor.variables = {}
+        for key, value in (("x", "0"), ("y", "0"), ("scale", "0.7"), ("rotation", "0")):
+            editor.variables[key] = Mock()
+            editor.variables[key].get.return_value = value
+        return editor
+
+    def test_editor_apply_warns_and_updates_invalid_hash_field(self):
+        editor = self.editor()
+        editor.running = False
+        editor.current = ("Alice", 0, "select")
+        editor.variant = Mock()
+        editor.variant.get.return_value = "sources/M6"
+        editor.refresh_labels = Mock()
+        editor.status = Mock()
+        with patch("editor.messagebox.showwarning") as warning:
+            self.assertTrue(editor.apply())
+        self.assertIn("Alice / base: select", warning.call_args.args[1])
+        editor.hash_value.set.assert_called_once_with(BLANK_HASH)
+        self.assertEqual(self.draft.hash_warnings, [])
+
+    def test_editor_save_warns_but_continues(self):
+        editor = self.editor()
+        editor.running = False
+        editor.resolve_fields = Mock(return_value=True)
+        editor.status = Mock()
+        editor.refresh_labels = Mock()
+        self.draft.agents["Alice"][0]["tab"]["hash"] = "bad"
+        with patch("editor.messagebox.showwarning") as warning:
+            self.assertTrue(editor.save())
+        self.assertIn("Alice / base: tab", warning.call_args.args[1])
+        self.assertIn(BLANK_HASH, warning.call_args.args[1])
+        self.assertEqual(Draft(self.root).agents["Alice"][0]["tab"]["hash"], BLANK_HASH)
+
+    def tree_editor(self):
+        editor = self.editor()
+        window = tk.Tk()
+        window.withdraw()
+        self.addCleanup(window.destroy)
+        editor.tree = ttk.Treeview(window)
+        editor.tree_items = {}
+        editor.running = False
+        editor.current = None
+        editor.search = Mock()
+        editor.search.get.return_value = ""
+        editor.update_title = Mock()
+        return editor
+
+    def tree_tags(self, editor):
+        return {
+            (editor.tree.item(item, "text").removesuffix(" *"), editor.tree_items[item]):
+                editor.tree.item(item, "tags")
+            for item in editor.tree_items
+        }
+
+    def test_tree_highlights_invalid_masks_and_only_their_ancestors(self):
+        self.draft.add_skin("Alice")
+        self.draft.add_skin("Alice")
+        self.draft.add_agent("Bob")
+        self.draft.agents["Alice"][1] = {"select": entry(BLANK_HASH), "tab": entry()}
+        self.draft.agents["Alice"][2] = {"round": entry("invalid")}
+        editor = self.tree_editor()
+        editor.rebuild_tree()
+        tagged = {
+            identity for identity, tags in self.tree_tags(editor).items()
+            if "invalid_hash" in tags
+        }
+        self.assertEqual(tagged, {
+            ("Alice", ("Alice", 0, None)),
+            ("Skin", ("Alice", 1, None)),
+            ("select", ("Alice", 1, "select")),
+            ("Skin2", ("Alice", 2, None)),
+            ("round", ("Alice", 2, "round")),
+        })
+        editor.search.get.return_value = "Bob"
+        editor.rebuild_tree()
+        self.assertTrue(all(not tags for tags in self.tree_tags(editor).values()))
+
+    def test_tree_highlights_update_after_repairs_removal_and_save(self):
+        self.draft.agents["Alice"][0]["select"]["hash"] = BLANK_HASH
+        self.draft.agents["Alice"][0]["tab"]["hash"] = BLANK_HASH
+        editor = self.tree_editor()
+        editor.rebuild_tree()
+        self.assertEqual(sum(bool(tags) for tags in self.tree_tags(editor).values()), 4)
+        self.draft.apply_mask("Alice", 0, "select", entry(), "sources/M6")
+        editor.refresh_labels()
+        self.assertEqual(sum(bool(tags) for tags in self.tree_tags(editor).values()), 3)
+        self.draft.save()
+        editor.refresh_labels()
+        self.assertEqual(sum(bool(tags) for tags in self.tree_tags(editor).values()), 3)
+        self.draft.agents["Alice"][0].pop("tab")
+        editor.refresh_labels()
+        self.assertTrue(all(not tags for tags in self.tree_tags(editor).values()))
+
+    def test_tree_highlights_load_time_hash_replacements(self):
+        path = self.root / "agents.json"
+        agents = json.loads(path.read_text(encoding="utf-8"))
+        agents["Alice"][0]["round"]["hash"] = "invalid"
+        path.write_text(json.dumps(agents), encoding="utf-8")
+        editor = self.tree_editor()
+        editor.draft = Draft(self.root)
+        editor.rebuild_tree()
+        self.assertEqual(sum(bool(tags) for tags in self.tree_tags(editor).values()), 3)
 
     def test_agent_skin_mask_round_trip(self):
         self.draft.add_agent("NewAgent")
@@ -107,6 +317,21 @@ class DraftTests(unittest.TestCase):
         self.draft.stage_image("sources/M6", "Alice", 0, self.artwork("blue"))
         self.draft.discard_imports()
         self.assertFalse(self.draft.dirty)
+
+    def test_import_can_flip_vertically_before_saving(self):
+        path = self.root / "vertical.png"
+        image = Image.new("RGBA", (2, 2))
+        image.putpixel((0, 0), (255, 0, 0, 255))
+        image.putpixel((0, 1), (0, 0, 255, 255))
+        image.save(path)
+        target = self.draft.stage_image("sources/M6", "Alice", 0, path, flip_vertical=True)
+        staged = self.draft.imports[target]
+        self.assertEqual(staged.getpixel((0, 0)), (0, 0, 255, 255))
+        self.assertEqual(staged.getpixel((0, 1)), (255, 0, 0, 255))
+        self.draft.save()
+        with Image.open(target) as saved:
+            self.assertEqual(saved.getpixel((0, 0)), (0, 0, 255, 255))
+            self.assertEqual(saved.getpixel((0, 1)), (255, 0, 0, 255))
 
     def test_config_and_import_saved_together(self):
         settings = deepcopy(self.draft.settings)

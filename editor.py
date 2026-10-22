@@ -18,8 +18,8 @@ from PIL import Image, ImageChops, ImageFilter, ImageTk, UnidentifiedImageError
 
 from config import ROOT, DEFAULTS, archive_name, resolve_path
 from editor_model import (
-    DEFAULT_MASK, Draft, MaskEntry, duplicate_hashes, hash_from_filename,
-    validate_mask, validate_transform_image,
+    BLANK_HASH, DEFAULT_MASK, Draft, MaskEntry, duplicate_hashes, hash_from_filename,
+    valid_hash, validate_mask, validate_transform_image,
 )
 from masks import preview_mask
 from textures import MASK_SPECS, MaskKind, position_image, render_mask
@@ -83,6 +83,7 @@ class Editor:
         tree_area = ttk.Frame(navigation)
         tree_area.pack(fill="both", expand=True, pady=4)
         self.tree = ttk.Treeview(tree_area, show="tree", selectmode="browse")
+        self.tree.tag_configure("invalid_hash", foreground="red")
         self.tree.pack(side="left", fill="both", expand=True)
         tree_scroll = ttk.Scrollbar(tree_area, orient="vertical", command=self.tree.yview)
         tree_scroll.pack(side="right", fill="y")
@@ -170,6 +171,20 @@ class Editor:
         warnings = duplicate_hashes(self.draft.agents)
         if warnings:
             self.append_log("Existing duplicate game hashes (review, not a load error):\n" + "\n".join(warnings) + "\n")
+        self.warn_invalid_hashes()
+
+    def warn_invalid_hashes(self) -> None:
+        if not self.draft.hash_warnings:
+            return
+        text = (
+            "Invalid game hashes were replaced with the blank placeholder "
+            f"{BLANK_HASH} for:\n\n" + "\n".join(self.draft.hash_warnings)
+            + "\n\nThe editor can continue normally. These masks will not replace game textures "
+            "until valid hashes are supplied. Save writes the placeholders to agents.json."
+        )
+        self.append_log(text + "\n")
+        messagebox.showwarning("Invalid game hashes", text, parent=self.window)
+        self.draft.hash_warnings.clear()
 
     def error(self, exc: BaseException) -> None:
         messagebox.showerror("editor", str(exc), parent=self.window)
@@ -183,14 +198,17 @@ class Editor:
     def entry(self, require_hash: bool = True) -> MaskEntry:
         try:
             entry: MaskEntry = {
-                "hash": self.hash_value.get().strip() if require_hash else "00000000",
+                "hash": BLANK_HASH,
                 "offset": [int(self.variables["x"].get()), int(self.variables["y"].get())],
                 "scale": float(self.variables["scale"].get()),
                 "rotation": float(self.variables["rotation"].get()),
             }
         except ValueError as exc:
             raise ValueError("Enter integer offsets and numeric scale/rotation.") from exc
-        return validate_mask(entry)
+        validate_mask(entry)
+        if require_hash:
+            entry["hash"] = self.hash_value.get().strip()
+        return entry
 
     def resolve_fields(self) -> bool:
         if not self.fields_dirty():
@@ -240,13 +258,14 @@ class Editor:
             self.tree.selection_set(selected_item)
             self.tree.see(selected_item)
         self.loading = False
-        self.update_title()
+        self.refresh_labels()
 
     def update_title(self) -> None:
         dirty = self.draft.dirty or self.fields_dirty()
         self.window.title((" * " if dirty else "") + "Mindscape Icons editor")
 
     def refresh_labels(self) -> None:
+        invalid_items: set[str] = set()
         for item, (name, index, kind) in self.tree_items.items():
             if kind is None:
                 continue
@@ -257,6 +276,13 @@ class Editor:
                 item, text=kind + (" [missing: select to add]" if entry is None else "")
                 + (" *" if entry != saved else ""),
             )
+            if entry is not None and (not valid_hash(entry["hash"]) or entry["hash"] == BLANK_HASH):
+                node = item
+                while node:
+                    invalid_items.add(node)
+                    node = self.tree.parent(node)
+        for item in self.tree_items:
+            self.tree.item(item, tags=("invalid_hash",) if item in invalid_items else ())
         self.update_title()
 
     def select(self, _: object = None) -> None:
@@ -407,8 +433,10 @@ class Editor:
             return False
         try:
             self.draft.apply_mask(*self.current, self.entry(), self.variant.get())
+            self.hash_value.set(self.draft.agents[self.current[0]][self.current[1]][self.current[2]]["hash"])
             self.form_original = self.values()
             self.refresh_labels()
+            self.warn_invalid_hashes()
             warnings = duplicate_hashes(self.draft.agents)
             self.status.set("Applied to draft." + (" Duplicate hashes: see log." if warnings else ""))
             if warnings:
@@ -469,6 +497,11 @@ class Editor:
         path = filedialog.askopenfilename(title="Choose replacement artwork", parent=self.window)
         if not path:
             return
+        flip_vertical = messagebox.askyesno(
+            "Flip artwork",
+            "Flip the imported artwork vertically? The generated mod uses upside-down artwork.",
+            parent=self.window,
+        )
         try:
             name, index, _ = self.current
             target = self.draft.target(self.variant.get(), name, index)
@@ -479,7 +512,9 @@ class Editor:
                     "Different existing artwork is replaced only on Save.", parent=self.window,
                 ):
                     return
-            self.draft.stage_image(self.variant.get(), name, index, Path(path))
+            self.draft.stage_image(
+                self.variant.get(), name, index, Path(path), flip_vertical=flip_vertical,
+            )
             self.load_artwork()
             self.update_title()
         except USER_ERRORS as exc:
@@ -523,6 +558,8 @@ class Editor:
         except USER_ERRORS as exc:
             self.error(exc)
             return False
+        finally:
+            self.warn_invalid_hashes()
 
     def reload(self) -> None:
         if self.running:
@@ -545,6 +582,7 @@ class Editor:
         self.rebuild_tree()
         self.load_artwork()
         self.status.set("Reloaded saved data.")
+        self.warn_invalid_hashes()
 
     def edit_config(self) -> None:
         if self.running or not self.resolve_fields():

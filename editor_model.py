@@ -31,12 +31,43 @@ class MaskEntry(TypedDict):
 
 Agents = dict[str, list[dict[str, MaskEntry]]]
 DEFAULT_MASK: MaskEntry = {"hash": "", "offset": [0, 0], "scale": 1.0, "rotation": 0.0}
+BLANK_HASH = "00000000"
+
+
+def valid_hash(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{8}", value) is not None
+
+
+def hash_warning(name: str, index: int, kinds: list[str]) -> str:
+    skin = "base" if index == 0 else f"skin{index}"
+    return f"{name} / {skin}: {', '.join(kinds)}"
+
+
+def replace_invalid_hashes(value: object) -> list[str]:
+    warnings: list[str] = []
+    if not isinstance(value, dict):
+        return warnings
+    for name, skins in value.items():
+        if not isinstance(skins, list):
+            continue
+        for index, skin in enumerate(skins):
+            if not isinstance(skin, dict):
+                continue
+            invalid: list[str] = []
+            for kind, entry in skin.items():
+                if kind in MASK_SPECS and isinstance(entry, dict) and "hash" in entry:
+                    if not valid_hash(entry["hash"]):
+                        entry["hash"] = BLANK_HASH
+                        invalid.append(kind)
+            if invalid:
+                warnings.append(hash_warning(name, index, invalid))
+    return warnings
 
 
 def validate_mask(value: object, label: str = "Mask") -> MaskEntry:
     if not isinstance(value, dict) or set(value) != set(DEFAULT_MASK):
         raise ValueError(f"{label}: expected hash, offset, scale, and rotation.")
-    if not isinstance(value["hash"], str) or not re.fullmatch(r"[0-9a-fA-F]{8}", value["hash"]):
+    if not valid_hash(value["hash"]):
         raise ValueError(f"{label}: game hash must contain exactly eight hexadecimal digits.")
     offset = value["offset"]
     if not isinstance(offset, list) or len(offset) != 2 or any(type(n) is not int for n in offset):
@@ -104,6 +135,8 @@ def duplicate_hashes(agents: Agents) -> list[str]:
     for name, skins in agents.items():
         for index, skin in enumerate(skins):
             for kind, entry in skin.items():
+                if entry["hash"] == BLANK_HASH:
+                    continue
                 hashes.setdefault(entry["hash"].lower(), []).append(f"{name}/skin {index}/{kind}")
     return [f"{key}: {', '.join(entries)}" for key, entries in hashes.items() if len(entries) > 1]
 
@@ -148,7 +181,10 @@ class Draft:
     def __init__(self, root: Path = ROOT):
         self.root = root.resolve()
         self.settings = load_config(self.root)
-        self.agents = validate_agents(read_json(self.root / "agents.json"), self.settings, self.root)
+        value = read_json(self.root / "agents.json")
+        self.hash_warnings = replace_invalid_hashes(value)
+        self._hash_repairs_pending = bool(self.hash_warnings)
+        self.agents = validate_agents(value, self.settings, self.root)
         self.saved_agents = deepcopy(self.agents)
         self.saved_settings = deepcopy(self.settings)
         self.originals: dict[Path, bytes | None] = {
@@ -160,7 +196,7 @@ class Draft:
     @property
     def dirty(self) -> bool:
         return bool(
-            self.imports or self.agents != self.saved_agents
+            self.imports or self._hash_repairs_pending or self.agents != self.saved_agents
             or self.settings != self.saved_settings
         )
 
@@ -236,9 +272,13 @@ class Draft:
             raise ValueError(f"Source symlink points outside configured directory: {path}")
         return decode_image(path), path
 
-    def stage_image(self, source: str, name: str, index: int, path: Path) -> Path | None:
+    def stage_image(
+        self, source: str, name: str, index: int, path: Path, flip_vertical: bool = False,
+    ) -> Path | None:
         target = self.target(source, name, index)
         image = decode_image(path)
+        if flip_vertical:
+            image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
         resolved = resolve_source(self.root / source, name, index)
         if resolved is not None:
             existing = decode_image(resolved)
@@ -250,6 +290,10 @@ class Draft:
         return target
 
     def apply_mask(self, name: str, index: int, kind: MaskKind, entry: MaskEntry, source: str) -> None:
+        entry = deepcopy(entry)
+        invalid_hash = "hash" in entry and not valid_hash(entry["hash"])
+        if invalid_hash:
+            entry["hash"] = BLANK_HASH
         validate_mask(entry)
         image, _ = self.artwork(source, name, index)
         validate_transform_image(entry, image)
@@ -261,7 +305,9 @@ class Draft:
             elif path is not None:
                 with Image.open(path) as variant_image:
                     validate_transform_image(entry, variant_image)
-        self.agents[name][index][kind] = deepcopy(entry)
+        self.agents[name][index][kind] = entry
+        if invalid_hash:
+            self.hash_warnings.append(hash_warning(name, index, [kind]))
 
     def discard_imports(self) -> None:
         self.imports.clear()
@@ -271,13 +317,16 @@ class Draft:
         }
 
     def save(self) -> list[Path]:
+        warnings = replace_invalid_hashes(self.agents)
+        self.hash_warnings.extend(warnings)
+        self._hash_repairs_pending |= bool(warnings)
         self.validate()
         # Check even unchanged JSON so a stale draft cannot clobber later edits.
         for path, original in self.originals.items():
             if (path.parent == self.root or path in self.imports) and file_bytes(path) != original:
                 raise ValueError(f"File changed outside the editor; reload before saving: {path}")
         writes: dict[Path, bytes] = {}
-        if self.agents != self.saved_agents:
+        if self._hash_repairs_pending or self.agents != self.saved_agents:
             writes[self.root / "agents.json"] = agent_json(self.agents)
         if self.settings != self.saved_settings or self.originals[self.root / "config.json"] is None:
             if self.dirty:
@@ -333,6 +382,7 @@ class Draft:
         for path, content in writes.items():
             self.originals[path] = content
         self.saved_agents = deepcopy(self.agents)
+        self._hash_repairs_pending = False
         self.saved_settings = deepcopy(self.settings)
         self.imports.clear()
         return list(backups.values())

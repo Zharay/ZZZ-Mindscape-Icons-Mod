@@ -368,9 +368,17 @@ class GuiTests(unittest.TestCase):
         self.window.update()
         self.assertEqual(self.editor.current, ("NewAgent", 1, "select"))
         art = self.root / "art.png"
-        Image.new("RGBA", (50, 60), "blue").save(art)
-        with patch("editor.filedialog.askopenfilename", return_value=str(art)):
+        image = Image.new("RGBA", (50, 60), "blue")
+        image.paste("red", (0, 0, 50, 30))
+        image.save(art)
+        with patch("editor.filedialog.askopenfilename", return_value=str(art)), patch(
+            "editor.messagebox.askyesno", return_value=True
+        ) as ask_flip:
             self.editor.import_art()
+        ask_flip.assert_called_once()
+        target = self.editor.draft.target("sources/M6", "NewAgent", 1)
+        self.assertEqual(self.editor.draft.imports[target].getpixel((0, 0)), (0, 0, 255, 255))
+        self.assertEqual(self.editor.draft.imports[target].getpixel((0, 59)), (255, 0, 0, 255))
         self.editor.hash_value.set("abcdef01")
         self.assertTrue(self.editor.apply())
         with patch("editor.messagebox.askyesno", return_value=True):

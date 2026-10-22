@@ -42,6 +42,9 @@ them first.
 
 An image is shared across that agent's icon shapes, so changing it may affect
 more than one screen. Check the previews before generating the mod.
+When importing artwork, the editor asks whether to flip it vertically. Choose
+Yes when your image is right-side up so that the resulting mod is correctly
+orientated.
 
 ### Edit configuration
 
