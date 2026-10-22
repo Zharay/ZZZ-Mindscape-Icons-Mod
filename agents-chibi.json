@@ -2,12 +2,12 @@
   "Alice": [
     {
       "tab": { "hash": "93ef2127", "offset": [0, 0], "scale": 1.6, "rotation": 0.0 },
-      "select": { "hash": "7bf57b2b", "offset": [0, 0], "scale": 2.3, "rotation": 0.0 },
+      "select": { "hash": "7bf57b2b", "offset": [0, 0], "scale": 3.3, "rotation": 0.0 },
       "round": { "hash": "4c8624e0", "offset": [0, 0], "scale": 1.4, "rotation": 0.0 }
     },
     {
-      "tab": { "hash": "e65f485b", "offset": [0, 0], "scale": 1.0, "rotation": 0.0 },
-      "select": { "hash": "be5c555f", "offset": [0, 0], "scale": 1.0, "rotation": 0.0 },
+      "tab": { "hash": "e65f485b", "offset": [0, 0], "scale": 1.6, "rotation": 0.0 },
+      "select": { "hash": "be5c555f", "offset": [0, 0], "scale": 3.3, "rotation": 0.0 },
       "round": { "hash": "fded7f09", "offset": [0, 0], "scale": 1.4, "rotation": 0.0 }
     }
   ],

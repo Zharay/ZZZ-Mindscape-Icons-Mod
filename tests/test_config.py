@@ -41,6 +41,7 @@ class ConfigTests(unittest.TestCase):
             ("CONTRAST_MULTIPLIER", True), ("SATURATION_MULTIPLIER", float("inf")),
             ("SATURATION_MULTIPLIER", -1), ("FALLBACK_MODE", "unknown"),
             ("CONTRAST_MULTIPLIER", 10 ** 1000),
+            ("IMAGE_UPSCALER", "unknown"), ("IMAGE_UPSCALER", True),
         )
         for key, value in cases:
             with self.subTest(key=key, value=value):
@@ -51,7 +52,8 @@ class ConfigTests(unittest.TestCase):
 
     def test_safe_export_paths(self):
         for path in (".", "..", str(Path.home()), self.root.anchor, "sources", "sources/M6/out",
-                     "masks", ".git/cache", "tests", "config.json", "agents-chibi.json", "screenshots/output"):
+                     "masks", ".git/cache", "tests", "config.json", "agents-chibi.json",
+                     "screenshots/output", "models", "upscaler.py", "requirements-upscaler.txt"):
             with self.subTest(path=path):
                 settings = deepcopy(DEFAULTS)
                 settings["EXPORT_DIR"] = path
@@ -92,3 +94,17 @@ class ConfigTests(unittest.TestCase):
         path.write_text('{"Alice": [], "Alice": []}', encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             read_json(path)
+
+    def test_legacy_config_adds_only_upscaler_default(self):
+        settings = deepcopy(self.settings)
+        settings.pop("IMAGE_UPSCALER")
+        path = self.root / "config.json"
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        before = path.read_bytes()
+        self.assertEqual(load_config(self.root), self.settings)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_ml_option_round_trip(self):
+        self.settings["IMAGE_UPSCALER"] = "realesrgan"
+        (self.root / "config.json").write_text(json.dumps(self.settings), encoding="utf-8")
+        self.assertEqual(load_config(self.root), self.settings)

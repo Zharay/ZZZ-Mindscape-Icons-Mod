@@ -30,6 +30,10 @@ page.
   ```powershell
   python -m pip install Pillow
   ```
+- (Optional) Real-ESRGAN for upscaling (Requires an NVIDIA GPU)
+  ```powershell
+  python -m pip install -r requirements-upscaler.txt
+  ```
 
 ### Visual editor
 
@@ -59,6 +63,12 @@ Most users can leave the settings as they are. To change them, choose **Edit
 Config** in the editor. You can also edit `config.json` directly, but close the
 editor first. The settings control the mod name, image variants, output folder,
 and image appearance.
+
+For sharper enlargements of small anime artwork, optionally install
+`python -m pip install -r requirements-upscaler.txt` and choose
+`IMAGE_UPSCALER: realesrgan` in **Edit Config**. This uses Real-ESRGAN's 4x anime
+model and requires an NVIDIA GPU with a current driver; the model downloads on
+first use. The default, `pillow`, needs no GPU.
 
 ### Command-line generation
 

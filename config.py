@@ -10,6 +10,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeGuard, TypedDict, cast
 
+from upscaler import Upscaler
+
 ROOT = Path(__file__).resolve().parent
 
 
@@ -24,6 +26,7 @@ class Settings(TypedDict):
     SEPARATE_INIS: bool
     CONTRAST_MULTIPLIER: float
     SATURATION_MULTIPLIER: float
+    IMAGE_UPSCALER: Upscaler
 
 
 DEFAULTS: Settings = {
@@ -37,6 +40,7 @@ DEFAULTS: Settings = {
     "SEPARATE_INIS": True,
     "CONTRAST_MULTIPLIER": 1.0,
     "SATURATION_MULTIPLIER": 1.2,
+    "IMAGE_UPSCALER": "pillow",
 }
 
 
@@ -105,6 +109,8 @@ def validate_settings(value: object, root: Path = ROOT) -> Settings:
             raise ValueError(f"{key} must be a finite nonnegative number.")
     if value["FALLBACK_MODE"] not in ("original", "skip"):
         raise ValueError("FALLBACK_MODE must be original or skip.")
+    if value["IMAGE_UPSCALER"] not in ("pillow", "realesrgan"):
+        raise ValueError("IMAGE_UPSCALER must be pillow or realesrgan.")
     sources = value["SOURCE_DIRS"]
     if not isinstance(sources, list) or not sources:
         raise ValueError("SOURCE_DIRS must be a nonempty ordered list of directories.")
@@ -142,11 +148,12 @@ def validate_settings(value: object, root: Path = ROOT) -> Settings:
         raise ValueError(f"Export directory would contain the repository: {target}")
     protected_paths = [
         root / ".git", root / ".github", root / "masks", root / "screenshots",
-        root / "sources", root / "tests",
+        root / "sources", root / "tests", root / "models",
         *resolved,
         *(root / name for name in (
             "agents.json", "agents-chibi.json", "config.json", "config.py", "editor.py", "editor_model.py",
-            "main.py", "agent_data.py", "textures.py", "masks.py", "README.md",
+            "main.py", "agent_data.py", "textures.py", "masks.py", "upscaler.py",
+            "requirements-upscaler.txt", "README.md",
         )),
     ]
     if any(overlaps(target, path.resolve()) for path in protected_paths):
@@ -159,7 +166,11 @@ def load_config(root: Path = ROOT) -> Settings:
     if not path.exists():
         warnings.warn(f"{path} is missing; using built-in defaults.", stacklevel=2)
         return validate_settings(deepcopy(DEFAULTS), root)
-    return validate_settings(read_json(path), root)
+    value = read_json(path)
+    # Older saved configurations predate the optional ML backend.
+    if isinstance(value, dict) and "IMAGE_UPSCALER" not in value:
+        value["IMAGE_UPSCALER"] = DEFAULTS["IMAGE_UPSCALER"]
+    return validate_settings(value, root)
 
 
 def archive_name(settings: Settings) -> str:
@@ -194,3 +205,4 @@ if TYPE_CHECKING:
     SEPARATE_INIS: bool
     CONTRAST_MULTIPLIER: float
     SATURATION_MULTIPLIER: float
+    IMAGE_UPSCALER: Upscaler

@@ -14,6 +14,9 @@ def main() -> None:
     from agent_data import gen_textures, create_ini, export
     from masks import gen_masks
 
+    if settings["IMAGE_UPSCALER"] == "realesrgan":
+        from upscaler import load_model
+        load_model()
     export_dir: Path = resolve_path(ROOT, settings["EXPORT_DIR"])
     gen_masks()
     if settings["CLEAN_EXPORTS"]:

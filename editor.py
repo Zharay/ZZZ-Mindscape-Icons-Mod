@@ -23,8 +23,9 @@ from editor_model import (
 )
 from masks import preview_mask
 from textures import MASK_SPECS, MaskKind, is_chibi, position_image, render_mask
+from upscaler import UpscaleError
 
-USER_ERRORS = (ValueError, OSError, UnidentifiedImageError, Image.DecompressionBombError)
+USER_ERRORS = (ValueError, OSError, UnidentifiedImageError, Image.DecompressionBombError, UpscaleError)
 
 DARK_THEME = {
     "background": "#202124",
@@ -233,7 +234,7 @@ class Editor:
         for row, (name, label, low, high, default) in enumerate((
             ("x", "X offset (+ moves left)", -1000, 1000, "0"),
             ("y", "Y offset (+ preview down)", -1000, 1000, "0"),
-            ("scale", "Image scale", 0.01, 3, "1"),
+            ("scale", "Image scale", 0.01, 5, "1"),
             ("rotation", "Rotation (+ preview CCW)", -360, 360, "0"),
         )):
             variable = tk.StringVar(value=default)
@@ -560,7 +561,10 @@ class Editor:
             mask = self.masks[kind]
             spec = MASK_SPECS[kind]
             offset = (entry["offset"][0], entry["offset"][1])
-            positioned = position_image(mask.size, self.image, offset, entry["scale"], entry["rotation"])
+            upscaler = self.draft.settings["IMAGE_UPSCALER"]
+            positioned = position_image(
+                mask.size, self.image, offset, entry["scale"], entry["rotation"], upscaler,
+            )
             overlay = Image.alpha_composite(checkerboard(mask.size), positioned)
             outside = ImageChops.invert(mask.getchannel("A")).point(
                 lambda value: int(value * self.dimming.get())
@@ -577,6 +581,7 @@ class Editor:
                 spec.size, mask, self.image, offset, entry["scale"], entry["rotation"],
                 spec.final_size, self.draft.settings["CONTRAST_MULTIPLIER"],
                 self.draft.settings["SATURATION_MULTIPLIER"],
+                upscaler,
             )
             result = Image.alpha_composite(checkerboard(result.size), result)
             width, height = max(self.canvas.winfo_width(), 400), max(self.canvas.winfo_height(), 200)
@@ -897,6 +902,7 @@ class ConfigDialog:
             "SEPARATE_INIS": "Separate Select / Tab / Round INIs",
             "CONTRAST_MULTIPLIER": "Contrast: 1 unchanged, 0 flat",
             "SATURATION_MULTIPLIER": "Saturation: 1 unchanged, 0 grayscale",
+            "IMAGE_UPSCALER": "Enlargement: Pillow or Real-ESRGAN anime (NVIDIA GPU; first use downloads model)",
         }
         row = 0
         for key in DEFAULTS:
@@ -911,6 +917,10 @@ class ConfigDialog:
                 variable = tk.StringVar(value="" if value is None else str(value))
                 if key == "FALLBACK_MODE":
                     control = ttk.Combobox(frame, textvariable=variable, values=("original", "skip"), state="readonly")
+                elif key == "IMAGE_UPSCALER":
+                    control = ttk.Combobox(
+                        frame, textvariable=variable, values=("pillow", "realesrgan"), state="readonly",
+                    )
                 elif key == "CUR_AGENT":
                     control = ttk.Combobox(frame, textvariable=variable, values=["", *editor.draft.agents])
                 else:

@@ -25,6 +25,7 @@ def project(root: Path, scripts=False):
         directory.mkdir(parents=True)
         Image.new("RGBA", (80, 90), (170, 80, 30, 185)).save(directory / "Alice.png")
     if scripts:
-        for name in ("main.py", "config.py", "agent_data.py", "textures.py", "masks.py", "editor_model.py", "editor.py"):
+        for name in ("main.py", "config.py", "agent_data.py", "textures.py", "masks.py",
+                     "upscaler.py", "editor_model.py", "editor.py"):
             shutil.copy2(ROOT / name, root / name)
     return settings

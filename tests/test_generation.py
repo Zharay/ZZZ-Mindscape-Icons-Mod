@@ -95,6 +95,26 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse((self.root / "masks").exists())
         self.assertTrue((self.root / "agents.json").is_file())
 
+    def test_ml_preflight_fails_before_cleanup_or_mask_writes(self):
+        draft = Draft(self.root)
+        draft.settings["IMAGE_UPSCALER"] = "realesrgan"
+        draft.save()
+        output = self.root / "export"
+        output.mkdir()
+        marker = output / "keep.txt"
+        marker.write_text("preserve me")
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import upscaler; from unittest.mock import patch; import main\n"
+             "with patch('upscaler.load_model', side_effect=upscaler.UpscaleError('GPU unavailable')):\n"
+             "    main.main()\n"],
+            cwd=self.root, capture_output=True, text=True, timeout=45,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GPU unavailable", result.stderr)
+        self.assertEqual(marker.read_text(), "preserve me")
+        self.assertFalse((self.root / "masks").exists())
+
     def test_chibi_pipeline_three_inis_mask_artwork_and_transforms(self):
         draft = Draft(self.root)
         settings = deepcopy(draft.settings)
@@ -403,14 +423,35 @@ class GuiTests(unittest.TestCase):
         dialog.variables["SEPARATE_INIS"].set(False)
         dialog.variables["CONTRAST_MULTIPLIER"].set("0.5")
         dialog.variables["SATURATION_MULTIPLIER"].set("0")
+        dialog.variables["IMAGE_UPSCALER"].set("realesrgan")
         dialog.sources.selection_set(1)
         dialog.move_source(-1)
         dialog.apply()
         self.assertEqual(self.editor.draft.settings["SOURCE_DIRS"][0], "sources/M3")
         self.assertEqual(self.editor.draft.settings["SATURATION_MULTIPLIER"], 0)
+        self.assertEqual(self.editor.draft.settings["IMAGE_UPSCALER"], "realesrgan")
         self.assertTrue(self.editor.save())
         self.assertEqual(Draft(self.root).settings["MOD_VERSION"], "6.0")
         self.assertEqual(Draft(self.root).settings, self.editor.draft.settings)
+
+    def test_ml_backend_reaches_both_previews_and_reports_failure(self):
+        from textures import position_image, render_mask
+        from upscaler import UpscaleError
+
+        self.select_mask()
+        self.editor.draft.settings["IMAGE_UPSCALER"] = "realesrgan"
+        self.editor.image = Image.new("RGBA", (180, 180), (100, 80, 200, 200))
+        self.editor.variables["scale"].set(str(512 / 180))
+        with patch("upscaler._upscale_rgb", return_value=Image.new("RGB", (720, 720))), patch(
+            "editor.position_image", wraps=position_image,
+        ) as position, patch("editor.render_mask", wraps=render_mask) as render:
+            self.editor.preview()
+        self.assertIn("Output 512 x 500", self.editor.preview_text.get())
+        self.assertEqual(position.call_args.args[-1], "realesrgan")
+        self.assertEqual(render.call_args.args[-1], "realesrgan")
+        with patch("upscaler._upscale_rgb", side_effect=UpscaleError("GPU unavailable")):
+            self.editor.preview()
+        self.assertIn("GPU unavailable", self.editor.preview_text.get())
 
     def test_generate_gates_unsaved_and_cleanup_cancel(self):
         self.editor.draft.add_agent("New")

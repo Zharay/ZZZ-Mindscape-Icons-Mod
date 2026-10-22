@@ -8,6 +8,7 @@
   "SEPARATE_INIS": true,
   "CONTRAST_MULTIPLIER": 1.0,
   "SATURATION_MULTIPLIER": 1.2,
+  "IMAGE_UPSCALER": "realesrgan",
   "SOURCE_DIRS": [
     "sources/M6",
     "sources/M3",
