@@ -38,6 +38,7 @@ class ConfigTests(unittest.TestCase):
             ("SOURCE_DIRS", ["sources/M6", "sources/M6"]),
             ("SOURCE_DIRS", ["sources/M6", "other/M6"]),
             ("CLEAN_EXPORTS", 1), ("SEPARATE_INIS", "false"),
+            ("BACKUP_JSON_FILES", 1),
             ("CONTRAST_MULTIPLIER", True), ("SATURATION_MULTIPLIER", float("inf")),
             ("SATURATION_MULTIPLIER", -1), ("FALLBACK_MODE", "unknown"),
             ("CONTRAST_MULTIPLIER", 10 ** 1000),
@@ -95,14 +96,22 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             read_json(path)
 
-    def test_legacy_config_adds_only_upscaler_default(self):
+    def test_legacy_config_adds_defaults_for_new_settings(self):
         settings = deepcopy(self.settings)
         settings.pop("IMAGE_UPSCALER")
+        settings.pop("AUTO_APPLY_DRAFT_CHANGES")
+        settings.pop("BACKUP_JSON_FILES")
         path = self.root / "config.json"
         path.write_text(json.dumps(settings), encoding="utf-8")
         before = path.read_bytes()
         self.assertEqual(load_config(self.root), self.settings)
         self.assertEqual(path.read_bytes(), before)
+
+    def test_auto_apply_setting_must_be_boolean(self):
+        settings = deepcopy(DEFAULTS)
+        settings["AUTO_APPLY_DRAFT_CHANGES"] = "true"
+        with self.assertRaisesRegex(ValueError, "AUTO_APPLY_DRAFT_CHANGES"):
+            validate_settings(settings, self.root)
 
     def test_ml_option_round_trip(self):
         self.settings["IMAGE_UPSCALER"] = "realesrgan"

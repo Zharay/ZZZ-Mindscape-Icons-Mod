@@ -24,6 +24,8 @@ class Settings(TypedDict):
     FALLBACK_MODE: str
     CLEAN_EXPORTS: bool
     SEPARATE_INIS: bool
+    AUTO_APPLY_DRAFT_CHANGES: bool
+    BACKUP_JSON_FILES: bool
     CONTRAST_MULTIPLIER: float
     SATURATION_MULTIPLIER: float
     IMAGE_UPSCALER: Upscaler
@@ -38,6 +40,8 @@ DEFAULTS: Settings = {
     "FALLBACK_MODE": "original",
     "CLEAN_EXPORTS": True,
     "SEPARATE_INIS": True,
+    "AUTO_APPLY_DRAFT_CHANGES": False,
+    "BACKUP_JSON_FILES": True,
     "CONTRAST_MULTIPLIER": 1.0,
     "SATURATION_MULTIPLIER": 1.2,
     "IMAGE_UPSCALER": "pillow",
@@ -100,7 +104,9 @@ def validate_settings(value: object, root: Path = ROOT) -> Settings:
         safe_component(value[key], key)
     if value["CUR_AGENT"] is not None and not isinstance(value["CUR_AGENT"], str):
         raise ValueError("CUR_AGENT must be an agent name or null.")
-    for key in ("CLEAN_EXPORTS", "SEPARATE_INIS"):
+    for key in (
+        "CLEAN_EXPORTS", "SEPARATE_INIS", "AUTO_APPLY_DRAFT_CHANGES", "BACKUP_JSON_FILES",
+    ):
         if type(value[key]) is not bool:
             raise ValueError(f"{key} must be true or false.")
     for key in ("CONTRAST_MULTIPLIER", "SATURATION_MULTIPLIER"):
@@ -167,9 +173,11 @@ def load_config(root: Path = ROOT) -> Settings:
         warnings.warn(f"{path} is missing; using built-in defaults.", stacklevel=2)
         return validate_settings(deepcopy(DEFAULTS), root)
     value = read_json(path)
-    # Older saved configurations predate the optional ML backend.
-    if isinstance(value, dict) and "IMAGE_UPSCALER" not in value:
-        value["IMAGE_UPSCALER"] = DEFAULTS["IMAGE_UPSCALER"]
+    # Older saved configurations predate these optional settings.
+    if isinstance(value, dict):
+        for key in ("IMAGE_UPSCALER", "AUTO_APPLY_DRAFT_CHANGES", "BACKUP_JSON_FILES"):
+            if key not in value:
+                value[key] = DEFAULTS[key]
     return validate_settings(value, root)
 
 

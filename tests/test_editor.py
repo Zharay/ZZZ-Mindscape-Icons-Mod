@@ -38,6 +38,51 @@ class DraftTests(unittest.TestCase):
         self.assertEqual((self.root / "agents.json").read_bytes(), original)
         self.assertEqual(list(self.root.rglob("*.bak")), [])
 
+    def test_json_backups_can_be_disabled_without_disabling_artwork_backups(self):
+        settings = deepcopy(self.draft.settings)
+        settings["BACKUP_JSON_FILES"] = False
+        self.draft.set_settings(settings)
+        self.draft.add_agent("Bob")
+        target = self.draft.target("sources/M6", "Alice", 0)
+        target.write_bytes((self.root / "sources" / "M6" / "Alice.png").read_bytes())
+        self.draft.stage_image("sources/M6", "Alice", 0, self.artwork("blue"))
+
+        backups = self.draft.save()
+
+        self.assertEqual(len(backups), 1)
+        self.assertTrue(backups[0].name.startswith("AliceM6.png."))
+        self.assertTrue(backups[0].name.endswith(".bak"))
+        self.assertEqual(list(self.root.rglob("*.json.*.bak")), [])
+        self.assertEqual(len(list(self.root.rglob("*.png.*.bak"))), 1)
+
+    def test_disabled_json_backups_preserve_atomic_rollback(self):
+        agents_path = self.root / "agents.json"
+        config_path = self.root / "config.json"
+        original_agents = agents_path.read_bytes()
+        original_config = config_path.read_bytes()
+        self.draft.add_agent("Bob")
+        settings = deepcopy(self.draft.settings)
+        settings["BACKUP_JSON_FILES"] = False
+        self.draft.set_settings(settings)
+        replace = os.replace
+        calls = 0
+
+        def fail_second(source, target):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("Injected replacement failure")
+            return replace(source, target)
+
+        with patch("editor_model.os.replace", side_effect=fail_second):
+            with self.assertRaisesRegex(ValueError, "Previous files restored"):
+                self.draft.save()
+
+        self.assertEqual(agents_path.read_bytes(), original_agents)
+        self.assertEqual(config_path.read_bytes(), original_config)
+        self.assertEqual(list(self.root.rglob(".editor-rollback-*")), [])
+        self.assertEqual(list(self.root.rglob("*.json.*.bak")), [])
+
     def enable_chibi(self):
         settings = deepcopy(self.draft.settings)
         settings["SOURCE_DIRS"].append("sources/Chibi")
@@ -312,6 +357,7 @@ class DraftTests(unittest.TestCase):
         editor.variant = Mock()
         editor.variant.get.return_value = "sources/M6"
         editor.reported_missing = set()
+        editor.update_validation_feedback = Mock()
         editor.update_title = Mock()
         return editor
 
@@ -327,6 +373,29 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(style.lookup("TFrame", "background"), DARK_THEME["background"])
         self.assertEqual(style.lookup("TEntry", "fieldbackground"), DARK_THEME["field"])
         self.assertEqual(style.lookup("Treeview", "background"), DARK_THEME["field"])
+
+    def test_running_does_not_disable_or_lighten_layout_widgets(self):
+        window = tk.Tk()
+        window.withdraw()
+        self.addCleanup(window.destroy)
+        editor = Editor(window, self.draft)
+        panes = next(
+            widget for widget in window.winfo_children()
+            if isinstance(widget, ttk.Panedwindow)
+        )
+        toolbar = next(
+            widget for widget in window.winfo_children()
+            if isinstance(widget, ttk.Frame)
+        )
+
+        editor.set_running(True)
+
+        self.assertFalse(panes.instate(["disabled"]))
+        self.assertFalse(toolbar.instate(["disabled"]))
+        self.assertEqual(ttk.Style(window).lookup("TPanedwindow", "background"), DARK_THEME["background"])
+        self.assertTrue(all(button.instate(["disabled"]) for button in editor.flip_buttons))
+
+        editor.set_running(False)
 
     def tree_tags(self, editor):
         return {
@@ -487,6 +556,274 @@ class DraftTests(unittest.TestCase):
         with Image.open(target) as saved:
             self.assertEqual(saved.getpixel((0, 0)), (0, 0, 255, 255))
             self.assertEqual(saved.getpixel((0, 1)), (255, 0, 0, 255))
+
+    def asymmetric_artwork(self):
+        image = Image.new("RGBA", (2, 2))
+        image.putdata([(255, 0, 0, 255), (0, 255, 0, 128),
+                       (0, 0, 255, 64), (255, 255, 0, 0)])
+        return image
+
+    def test_flip_existing_artwork_stages_saves_and_double_flip_is_noop(self):
+        base = self.root / "sources" / "M6" / "Alice.png"
+        original = self.asymmetric_artwork()
+        original.save(base)
+        original_bytes = base.read_bytes()
+        for vertical, operation in (
+            (True, Image.Transpose.FLIP_TOP_BOTTOM),
+            (False, Image.Transpose.FLIP_LEFT_RIGHT),
+        ):
+            with self.subTest(vertical=vertical):
+                draft = Draft(self.root)
+                target = draft.flip_image("sources/M6", "Alice", 0, vertical=vertical)
+                expected = original.transpose(operation)
+                self.assertEqual(draft.imports[target].tobytes(), expected.tobytes())
+                self.assertEqual(base.read_bytes(), original_bytes)
+                self.assertTrue(draft.dirty)
+                self.assertIsNone(draft.flip_image("sources/M6", "Alice", 0, vertical=vertical))
+                self.assertFalse(draft.dirty)
+                draft.flip_image("sources/M6", "Alice", 0, vertical=vertical)
+                draft.save()
+                loaded, _ = Draft(self.root).artwork("sources/M6", "Alice", 0)
+                self.assertEqual(loaded.tobytes(), expected.tobytes())
+                target.unlink()
+
+    def test_flip_staged_import_composes_and_can_be_discarded(self):
+        path = self.root / "import.png"
+        original = self.asymmetric_artwork()
+        original.save(path)
+        target = self.draft.stage_image("sources/M6", "Alice", 0, path, flip_vertical=True)
+        self.draft.flip_image("sources/M6", "Alice", 0, vertical=False)
+        expected = original.transpose(Image.Transpose.FLIP_TOP_BOTTOM).transpose(
+            Image.Transpose.FLIP_LEFT_RIGHT,
+        )
+        self.assertEqual(self.draft.imports[target].tobytes(), expected.tobytes())
+        self.draft.flip_image("sources/M6", "Alice", 0, vertical=False)
+        self.assertEqual(
+            self.draft.imports[target].tobytes(),
+            original.transpose(Image.Transpose.FLIP_TOP_BOTTOM).tobytes(),
+        )
+        self.draft.discard_imports()
+        self.assertFalse(target.exists())
+        self.assertFalse(self.draft.dirty)
+
+    def test_flip_chibi_skin_fallback_only_changes_selected_skin_and_mask(self):
+        self.enable_chibi()
+        self.draft.add_skin("Alice")
+        self.draft.agents["Alice"][1] = {"select": entry()}
+        source = self.root / "sources" / "Chibi"
+        source.mkdir()
+        original = self.asymmetric_artwork()
+        original.save(source / "Alice-select.png")
+        original.save(source / "Alice-tab.png")
+        self.draft.save()
+        target = self.draft.flip_image(
+            "sources/Chibi", "Alice", 1, vertical=False, kind="select",
+        )
+        self.assertEqual(target.name, "AliceSkin-select.png")
+        for index, kind in ((0, "select"), (0, "tab"), (1, "tab")):
+            image, _ = self.draft.artwork("sources/Chibi", "Alice", index, kind)
+            self.assertEqual(image.tobytes(), original.tobytes())
+        self.draft.save()
+        image, _ = Draft(self.root).artwork("sources/Chibi", "Alice", 1, "select")
+        self.assertEqual(image.tobytes(), original.transpose(Image.Transpose.FLIP_LEFT_RIGHT).tobytes())
+
+    def artwork_editor(self):
+        editor = self.editor()
+        editor.running = False
+        editor.current = ("Alice", 0, "select")
+        editor.variant = Mock()
+        editor.variant.get.return_value = "sources/M6"
+        editor.load_artwork = Mock()
+        editor.update_title = Mock()
+        editor.error = Mock()
+        return editor
+
+    def test_editor_import_flips_by_default_without_orientation_prompt(self):
+        editor = self.artwork_editor()
+        path = self.root / "import.png"
+        original = self.asymmetric_artwork()
+        original.save(path)
+        with patch("editor.filedialog.askopenfilename", return_value=str(path)), \
+                patch("editor.messagebox.askyesno") as prompt:
+            editor.import_art()
+        prompt.assert_not_called()
+        image, _ = self.draft.artwork("sources/M6", "Alice", 0)
+        self.assertEqual(image.tobytes(), original.transpose(Image.Transpose.FLIP_TOP_BOTTOM).tobytes())
+        editor.load_artwork.assert_called_once()
+        editor.update_title.assert_called_once()
+        editor.error.assert_not_called()
+
+    def test_editor_import_still_confirms_replacement(self):
+        editor = self.artwork_editor()
+        path = self.artwork()
+        self.draft.stage_image("sources/M6", "Alice", 0, path)
+        with patch("editor.filedialog.askopenfilename", return_value=str(path)), \
+                patch("editor.messagebox.askyesno", return_value=False) as prompt:
+            editor.import_art()
+        self.assertEqual(prompt.call_args.args[0], "Shared artwork replacement")
+        editor.load_artwork.assert_not_called()
+
+    def test_editor_flip_refreshes_and_respects_guards(self):
+        editor = self.artwork_editor()
+        with patch.object(self.draft, "flip_image") as flip:
+            for vertical in (True, False):
+                editor.flip_art(vertical=vertical)
+                flip.assert_called_with("sources/M6", "Alice", 0, vertical=vertical, kind="select")
+            self.assertEqual(editor.load_artwork.call_count, 2)
+            self.assertEqual(editor.update_title.call_count, 2)
+            flip.reset_mock()
+            editor.running = True
+            editor.flip_art(vertical=True)
+            editor.running = False
+            editor.current = None
+            editor.flip_art(vertical=False)
+            flip.assert_not_called()
+
+    def test_editor_flip_reports_missing_artwork(self):
+        editor = self.artwork_editor()
+        editor.variant.get.return_value = "sources/Chibi"
+        editor.flip_art(vertical=True)
+        editor.error.assert_called_once()
+        self.assertIn("No source", str(editor.error.call_args.args[0]))
+        self.assertEqual(self.draft.imports, {})
+        editor.load_artwork.assert_not_called()
+
+    def test_flip_buttons_follow_artwork_availability(self):
+        window = tk.Tk()
+        window.withdraw()
+        self.addCleanup(window.destroy)
+        editor = Editor(window, self.draft)
+
+        def assert_disabled(expected):
+            for button in editor.flip_buttons:
+                self.assertEqual(button.instate(["disabled"]), expected)
+
+        assert_disabled(True)
+        editor.current = ("Alice", 0, "select")
+        editor.reset_fields()
+        assert_disabled(False)
+        editor.set_running(True)
+        assert_disabled(True)
+        editor.set_running(False)
+        assert_disabled(False)
+
+        missing = self.root / "sources" / "M6" / "Alice.png"
+        missing.unlink()
+        editor.load_artwork()
+        assert_disabled(True)
+        editor.set_running(True)
+        editor.set_running(False)
+        assert_disabled(True)
+        with patch("editor.filedialog.askopenfilename", return_value=str(self.artwork())):
+            editor.import_art()
+        assert_disabled(False)
+        with patch("editor.messagebox.askyesno", return_value=True):
+            editor.discard_imports()
+        assert_disabled(True)
+
+        missing.write_text("invalid image")
+        editor.load_artwork()
+        assert_disabled(True)
+        Image.new("RGBA", (12, 14), "red").save(missing)
+        editor.load_artwork()
+        assert_disabled(False)
+
+        parent = next(item for item, target in editor.tree_items.items() if target[2] is None)
+        editor.tree.selection_set(parent)
+        editor.select()
+        assert_disabled(True)
+        self.assertIsNone(editor.image)
+
+    def test_copy_base_fields_copies_transforms_and_is_disabled_on_base_skin(self):
+        self.draft.add_skin("Alice")
+        self.draft.agents["Alice"][0]["select"].update({
+            "offset": [15, -8],
+            "scale": 1.25,
+            "rotation": 37,
+        })
+        self.draft.agents["Alice"][1]["select"] = {
+            **entry("abcdef12"),
+            "offset": [1, 2],
+            "scale": 0.8,
+            "rotation": -10,
+        }
+        window = tk.Tk()
+        window.withdraw()
+        self.addCleanup(window.destroy)
+        editor = Editor(window, self.draft)
+        editor.current = ("Alice", 0, "select")
+        editor.reset_fields()
+
+        self.assertTrue(editor.copy_base_button.instate(["disabled"]))
+        button_texts = [
+            child.cget("text") for child in editor.copy_base_button.master.winfo_children()
+            if isinstance(child, ttk.Button)
+        ]
+        self.assertLess(button_texts.index("Copy Base Fields"), button_texts.index("Reset Fields"))
+
+        editor.current = ("Alice", 1, "select")
+        editor.reset_fields()
+        self.assertFalse(editor.copy_base_button.instate(["disabled"]))
+        original_hash = editor.hash_value.get()
+
+        editor.copy_base_button.invoke()
+
+        self.assertEqual(
+            tuple(editor.variables[key].get() for key in ("x", "y", "scale", "rotation")),
+            ("15", "-8", "1.25", "37"),
+        )
+        self.assertEqual(editor.hash_value.get(), original_hash)
+
+    def test_hash_and_missing_artwork_feedback_updates_after_applying(self):
+        window = tk.Tk()
+        window.withdraw()
+        self.addCleanup(window.destroy)
+        editor = Editor(window, self.draft)
+        editor.current = ("Alice", 0, "select")
+        editor.reset_fields()
+
+        source = self.root / "sources" / "M6" / "Alice.png"
+        source.unlink()
+        editor.hash_value.set("invalid")
+        self.assertEqual(editor.hash_entry.cget("style"), "Invalid.TEntry")
+
+        with patch("editor.messagebox.showwarning"):
+            self.assertTrue(editor.apply())
+        self.assertEqual(editor.hash_value.get(), BLANK_HASH)
+        self.assertEqual(editor.import_button.cget("style"), "Invalid.TButton")
+
+        Image.new("RGBA", (12, 14), "red").save(source)
+        editor.load_artwork()
+        self.assertEqual(editor.import_button.cget("style"), "TButton")
+        editor.hash_value.set("abcdef12")
+        self.assertEqual(editor.hash_entry.cget("style"), "TEntry")
+
+        style = ttk.Style(window)
+        for widget, style_name in (
+            (editor.hash_entry, "Invalid.TEntry"),
+            (editor.import_button, "Invalid.TButton"),
+        ):
+            self.assertTrue(
+                style.lookup(style_name, "bordercolor") == "#ff0000"
+                or style.lookup(style_name, "foreground") == "#ff0000"
+            )
+
+    def test_flip_buttons_follow_variant_changes_and_reload(self):
+        window = tk.Tk()
+        window.withdraw()
+        self.addCleanup(window.destroy)
+        editor = Editor(window, self.draft)
+        editor.current = ("Alice", 0, "select")
+        editor.reset_fields()
+        (self.root / "sources" / "M3" / "Alice.png").unlink()
+        editor.variant.set("sources/M3")
+        editor.change_variant()
+        self.assertTrue(all(button.instate(["disabled"]) for button in editor.flip_buttons))
+        editor.variant.set("sources/M6")
+        editor.change_variant()
+        self.assertTrue(all(not button.instate(["disabled"]) for button in editor.flip_buttons))
+        editor.reload()
+        self.assertTrue(all(button.instate(["disabled"]) for button in editor.flip_buttons))
 
     def test_config_and_import_saved_together(self):
         settings = deepcopy(self.draft.settings)

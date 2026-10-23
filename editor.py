@@ -135,6 +135,27 @@ def apply_dark_theme(window: tk.Misc) -> None:
     )
 
 
+def set_validation_style(widget: ttk.Widget, base_style: str, invalid: bool) -> None:
+    style = ttk.Style(widget)
+    validation_style = f"Invalid.{base_style}"
+    layout = style.layout(base_style)
+    elements = []
+    pending = list(layout)
+    while pending:
+        element, options = pending.pop()
+        elements.append(element)
+        pending.extend(options.get("children", ()))
+    supports_border_color = any(
+        "-bordercolor" in style.element_options(element)
+        for element in elements
+    )
+    if supports_border_color:
+        style.configure(validation_style, bordercolor="#ff0000")
+    else:
+        style.configure(validation_style, foreground="#ff0000")
+    widget.configure(style=validation_style if invalid else base_style)
+
+
 def skin_label(index: int) -> str:
     return "Base" if index == 0 else "Skin" + (str(index) if index > 1 else "")
 
@@ -177,7 +198,7 @@ class Editor:
         toolbar.pack(fill="x")
         for text, command in (
             ("Save", self.save), ("Reload", self.reload),
-            ("Edit Config", self.edit_config), ("Generate Mod", self.generate),
+            ("Config", self.edit_config), ("Generate Mod", self.generate),
             ("Discard Imports", self.discard_imports),
         ):
             ttk.Button(toolbar, text=text, command=command).pack(side="left", padx=3)
@@ -217,15 +238,24 @@ class Editor:
         self.variants.pack(side="left", padx=5)
         self.active_variant = self.variant.get()
         self.variants.bind("<<ComboboxSelected>>", self.change_variant)
-        ttk.Button(source_row, text="Choose / Import Artwork", command=self.import_art).pack(side="left")
+        self.import_button = ttk.Button(source_row, text="Import Artwork", command=self.import_art)
+        self.import_button.pack(side="left", padx=3)
+        self.flip_buttons = [
+            ttk.Button(source_row, text="Flip Vertically", command=lambda: self.flip_art(vertical=True)),
+            ttk.Button(source_row, text="Flip Horizontally", command=lambda: self.flip_art(vertical=False)),
+        ]
+        for button in self.flip_buttons:
+            button.state(["disabled"])
+            button.pack(side="left", padx=3)
         self.source_info = tk.StringVar(value="M3/M6 share transforms. Chibi has separate artwork and transforms for each mask.")
         ttk.Label(right, textvariable=self.source_info, wraplength=780).pack(anchor="w")
         hash_row = ttk.Frame(right)
         hash_row.pack(fill="x", pady=7)
         ttk.Label(hash_row, text="Game texture hash:").pack(side="left")
         self.hash_value = tk.StringVar()
-        self.hash_value.trace_add("write", lambda *_: self.update_title() if not self.loading else None)
-        ttk.Entry(hash_row, textvariable=self.hash_value, width=18).pack(side="left", padx=5)
+        self.hash_value.trace_add("write", lambda *_: self.hash_changed())
+        self.hash_entry = ttk.Entry(hash_row, textvariable=self.hash_value, width=18)
+        self.hash_entry.pack(side="left", padx=5)
         ttk.Button(hash_row, text="Extract from Dump Filename", command=self.pick_hash).pack(side="left")
         self.variables: dict[str, tk.StringVar] = {}
         self.sliders: dict[str, ttk.Scale] = {}
@@ -251,8 +281,13 @@ class Editor:
         controls.columnconfigure(2, weight=1)
         buttons = ttk.Frame(right)
         buttons.pack(fill="x", pady=6)
-        ttk.Button(buttons, text="Apply Mask to Draft", command=self.apply).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Apply Changes", command=self.apply).pack(side="left", padx=3)
         ttk.Button(buttons, text="Remove Mask", command=self.remove_mask).pack(side="left", padx=3)
+        self.copy_base_button = ttk.Button(
+            buttons, text="Copy Base Fields", command=self.copy_base_fields,
+        )
+        self.copy_base_button.state(["disabled"])
+        self.copy_base_button.pack(side="left", padx=3)
         ttk.Button(buttons, text="Reset Fields", command=self.reset_fields).pack(side="left", padx=3)
         ttk.Label(buttons, text="Outside dimming:").pack(side="left", padx=10)
         self.dimming = tk.DoubleVar(value=0.7)
@@ -333,6 +368,8 @@ class Editor:
     def resolve_fields(self) -> bool:
         if not self.fields_dirty():
             return True
+        if self.draft.settings["AUTO_APPLY_DRAFT_CHANGES"]:
+            return self.apply()
         result = messagebox.askyesnocancel(
             "Unapplied mask edits", "Apply these mask edits to the draft?\n"
             "Yes: Apply. No: Discard fields. Cancel: Stay here.", parent=self.window,
@@ -384,6 +421,23 @@ class Editor:
         dirty = self.draft.dirty or self.fields_dirty()
         self.window.title((" * " if dirty else "") + "Mindscape Icons editor")
 
+    def hash_changed(self) -> None:
+        if not self.loading:
+            self.update_title()
+            self.update_validation_feedback()
+
+    def update_validation_feedback(self) -> None:
+        invalid_hash = False
+        missing_artwork = False
+        if self.current is not None:
+            hash_value = self.hash_value.get().strip()
+            invalid_hash = not valid_hash(hash_value) or hash_value == BLANK_HASH
+            missing_artwork = (
+                self.draft.artwork_path(self.variant.get(), *self.current) is None
+            )
+        set_validation_style(self.hash_entry, "TEntry", invalid_hash)
+        set_validation_style(self.import_button, "TButton", missing_artwork)
+
     def refresh_labels(self) -> None:
         invalid_items: set[str] = set()
         missing_items: set[str] = set()
@@ -418,6 +472,7 @@ class Editor:
             if item in missing_items:
                 tags.append("missing_artwork")
             self.tree.item(item, tags=tags)
+        self.update_validation_feedback()
         self.update_title()
 
     def report_missing_artwork(self) -> dict[str, dict[tuple[str, int, MaskKind], Path]]:
@@ -463,6 +518,9 @@ class Editor:
         if target[2] is None:
             self.current = None
             self.image = None
+            self.update_flip_buttons()
+            self.update_validation_feedback()
+            self.update_copy_base_button()
             self.selection.set(f"{target[0]} / {skin_label(target[1])} - select a mask below")
             self.form_original = ()
             self.schedule_preview()
@@ -470,10 +528,28 @@ class Editor:
         self.current = (target[0], target[1], target[2])
         self.reset_fields()
 
+    def update_copy_base_button(self) -> None:
+        if self.current is not None and self.current[1] > 0 and not self.running:
+            self.copy_base_button.state(["!disabled"])
+        else:
+            self.copy_base_button.state(["disabled"])
+
+    def copy_base_fields(self) -> None:
+        if self.running or self.current is None or self.current[1] == 0:
+            return
+        name, _, kind = self.current
+        base_entry = self.draft.agents_for(self.variant.get())[name][0].get(kind, DEFAULT_MASK)
+        for key, value in zip(
+            ("x", "y", "scale", "rotation"),
+            (*base_entry["offset"], base_entry["scale"], base_entry["rotation"]),
+        ):
+            self.variables[key].set(str(value))
+
     def reset_fields(self) -> None:
         if self.running or self.current is None:
             return
         name, index, kind = self.current
+        self.update_copy_base_button()
         entry = self.draft.agents_for(self.variant.get())[name][index].get(kind, DEFAULT_MASK)
         self.loading = True
         self.hash_value.set(entry["hash"])
@@ -532,8 +608,14 @@ class Editor:
                     self.sliders[name].configure(from_=-bound, to=bound)
             except USER_ERRORS as exc:
                 self.source_info.set(str(exc))
+        self.update_flip_buttons()
         self.refresh_labels()
         self.schedule_preview()
+
+    def update_flip_buttons(self) -> None:
+        state = "disabled" if self.running or self.image is None else "!disabled"
+        for button in self.flip_buttons:
+            button.state([state])
 
     def schedule_preview(self) -> None:
         if self.preview_job is not None:
@@ -669,11 +751,6 @@ class Editor:
         path = filedialog.askopenfilename(title="Choose replacement artwork", parent=self.window)
         if not path:
             return
-        flip_vertical = messagebox.askyesno(
-            "Flip artwork",
-            "Flip the imported artwork vertically? The generated mod uses upside-down artwork.",
-            parent=self.window,
-        )
         try:
             name, index, kind = self.current
             target = self.draft.target(self.variant.get(), name, index, kind)
@@ -687,8 +764,19 @@ class Editor:
                 ):
                     return
             self.draft.stage_image(
-                self.variant.get(), name, index, Path(path), flip_vertical=flip_vertical, kind=kind,
+                self.variant.get(), name, index, Path(path), flip_vertical=True, kind=kind,
             )
+            self.load_artwork()
+            self.update_title()
+        except USER_ERRORS as exc:
+            self.error(exc)
+
+    def flip_art(self, *, vertical: bool) -> None:
+        if self.running or self.current is None:
+            return
+        try:
+            name, index, kind = self.current
+            self.draft.flip_image(self.variant.get(), name, index, vertical=vertical, kind=kind)
             self.load_artwork()
             self.update_title()
         except USER_ERRORS as exc:
@@ -776,16 +864,24 @@ class Editor:
         if running:
             def disable(parent: tk.Misc) -> None:
                 for widget in parent.winfo_children():
-                    if isinstance(widget, ttk.Widget) and not widget.instate(["disabled"]):
-                        if widget is not self.notebook:
-                            widget.state(["disabled"])
-                            self.disabled_widgets.append(widget)
+                    if (
+                        isinstance(widget, ttk.Widget)
+                        and not isinstance(
+                            widget,
+                            (ttk.Frame, ttk.Label, ttk.LabelFrame, ttk.Panedwindow),
+                        )
+                        and widget is not self.notebook
+                        and not widget.instate(["disabled"])
+                    ):
+                        widget.state(["disabled"])
+                        self.disabled_widgets.append(widget)
                     disable(widget)
             disable(self.window)
         else:
             for widget in self.disabled_widgets:
                 widget.state(["!disabled"])
             self.disabled_widgets.clear()
+        self.update_flip_buttons()
 
     def generate(self) -> None:
         if self.running or not self.resolve_fields():
@@ -886,7 +982,7 @@ class ConfigDialog:
         self.editor = editor
         self.window = tk.Toplevel(editor.window)
         self.window.configure(background=DARK_THEME["background"])
-        self.window.title("editor - Edit Config")
+        self.window.title("editor - Config")
         self.window.transient(editor.window)
         self.window.grab_set()
         self.variables: dict[str, tk.Variable] = {}
@@ -900,6 +996,8 @@ class ConfigDialog:
             "FALLBACK_MODE": "Legacy option; cross-variant fallback is not implemented",
             "CLEAN_EXPORTS": "Delete and recreate output directory before generating",
             "SEPARATE_INIS": "Separate Select / Tab / Round INIs",
+            "AUTO_APPLY_DRAFT_CHANGES": "Apply edited mask fields to the draft without prompting",
+            "BACKUP_JSON_FILES": "Create .bak copies of JSON files when saving",
             "CONTRAST_MULTIPLIER": "Contrast: 1 unchanged, 0 flat",
             "SATURATION_MULTIPLIER": "Saturation: 1 unchanged, 0 grayscale",
             "IMAGE_UPSCALER": "Enlargement: Pillow or Real-ESRGAN anime (NVIDIA GPU; first use downloads model)",

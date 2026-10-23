@@ -46,9 +46,9 @@ save your changes. When you're ready, choose **Generate Mod** to create the file
 for the game. If you have unsaved changes, the editor will ask whether to save
 them first.
 
-When importing artwork, the editor asks whether to flip it vertically. Choose
-Yes when your image is right-side up so that the resulting mod is correctly
-orientated.
+Imported artwork is automatically flipped vertically for the game. Use **Flip
+Vertically** or **Flip Horizontally** beside **Choose / Import Artwork** to adjust
+its orientation. Flips are saved only when you choose **Save**.
 
 M3 and M6 images are shared across an agent's icon shapes. Chibi uses a separate
 image for each shape, with its own adjustments. Check the previews before generating the mod.
@@ -63,6 +63,11 @@ Most users can leave the settings as they are. To change them, choose **Edit
 Config** in the editor. You can also edit `config.json` directly, but close the
 editor first. The settings control the mod name, image variants, output folder,
 and image appearance.
+
+Enable `AUTO_APPLY_DRAFT_CHANGES` to apply edited mask fields to the draft
+automatically whenever the editor would otherwise ask whether to apply them.
+`BACKUP_JSON_FILES` controls whether saving creates `.bak` copies of JSON files;
+it is enabled by default.
 
 For sharper enlargements of small anime artwork, optionally install
 `python -m pip install -r requirements-upscaler.txt` and choose

@@ -342,10 +342,24 @@ class Draft:
         self, source: str, name: str, index: int, path: Path, flip_vertical: bool = False,
         kind: MaskKind | None = None,
     ) -> Path | None:
-        target = self.target(source, name, index, kind)
         image = decode_image(path)
         if flip_vertical:
             image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        return self._stage_image(source, name, index, image, kind)
+
+    def flip_image(
+        self, source: str, name: str, index: int, *, vertical: bool,
+        kind: MaskKind | None = None,
+    ) -> Path | None:
+        image, _ = self.artwork(source, name, index, kind)
+        operation = Image.Transpose.FLIP_TOP_BOTTOM if vertical else Image.Transpose.FLIP_LEFT_RIGHT
+        return self._stage_image(source, name, index, image.transpose(operation), kind)
+
+    def _stage_image(
+        self, source: str, name: str, index: int, image: Image.Image,
+        kind: MaskKind | None,
+    ) -> Path | None:
+        target = self.target(source, name, index, kind)
         self.artwork_path(source, name, index, kind)
         resolved = resolve_source(self.root / source, name, index, kind)
         if resolved is not None:
@@ -428,6 +442,8 @@ class Draft:
             return []
         temporary: dict[Path, Path] = {}
         backups: dict[Path, Path] = {}
+        rollback_files: dict[Path, Path] = {}
+        recovery_paths: set[Path] = set()
         committed: list[Path] = []
         token = uuid.uuid4().hex
         try:
@@ -439,9 +455,22 @@ class Draft:
                     stream.flush()
                     os.fsync(stream.fileno())
                 if path.exists():
-                    backup = path.with_name(f"{path.name}.{token}.bak")
+                    keep_backup = (
+                        path.suffix.lower() != ".json"
+                        or self.settings["BACKUP_JSON_FILES"]
+                    )
+                    if keep_backup:
+                        backup = path.with_name(f"{path.name}.{token}.bak")
+                        backups[path] = backup
+                    else:
+                        with tempfile.NamedTemporaryFile(
+                            dir=path.parent, prefix=".editor-rollback-", delete=False,
+                        ) as stream:
+                            rollback_files[path] = Path(stream.name)
+                    backup = backups.get(path, rollback_files.get(path))
+                    if backup is None:
+                        raise ValueError(f"Unable to prepare rollback data for {path}")
                     shutil.copy2(path, backup)
-                    backups[path] = backup
             # Recheck after preparing files, before the first replacement.
             for path in writes:
                 if file_bytes(path) != self.originals.get(path):
@@ -453,19 +482,29 @@ class Draft:
             failures: list[str] = []
             for path in reversed(committed):
                 try:
-                    if path in backups:
-                        shutil.copy2(backups[path], temporary[path])
-                        os.replace(temporary[path], path)
+                    backup = backups.get(path, rollback_files.get(path))
+                    if backup is not None:
+                        if path in backups:
+                            shutil.copy2(backup, temporary[path])
+                            os.replace(temporary[path], path)
+                        else:
+                            os.replace(backup, path)
                     else:
                         path.unlink()
                 except OSError as restore_error:
-                    failures.append(f"{path}: {restore_error}; backup: {backups.get(path, 'new file')}")
+                    recovery_path = backups.get(path, rollback_files.get(path, "new file"))
+                    failures.append(f"{path}: {restore_error}; backup: {recovery_path}")
+                    if path in rollback_files:
+                        recovery_paths.add(rollback_files[path])
             detail = "\nRecovery needed:\n" + "\n".join(failures) if failures else "\nPrevious files restored."
             raise ValueError(f"Save failed: {exc}{detail}") from exc
         finally:
             for staged in temporary.values():
                 if staged.exists():
                     staged.unlink()
+            for rollback in rollback_files.values():
+                if rollback.exists() and rollback not in recovery_paths:
+                    rollback.unlink()
         for path, content in writes.items():
             self.originals[path] = content
         self.saved_agents = deepcopy(self.agents)

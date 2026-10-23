@@ -466,6 +466,8 @@ class GuiTests(unittest.TestCase):
         dialog.variables["FALLBACK_MODE"].set("skip")
         dialog.variables["CLEAN_EXPORTS"].set(False)
         dialog.variables["SEPARATE_INIS"].set(False)
+        dialog.variables["AUTO_APPLY_DRAFT_CHANGES"].set(True)
+        dialog.variables["BACKUP_JSON_FILES"].set(False)
         dialog.variables["CONTRAST_MULTIPLIER"].set("0.5")
         dialog.variables["SATURATION_MULTIPLIER"].set("0")
         dialog.variables["IMAGE_UPSCALER"].set("realesrgan")
@@ -475,6 +477,8 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.editor.draft.settings["SOURCE_DIRS"][0], "sources/M3")
         self.assertEqual(self.editor.draft.settings["SATURATION_MULTIPLIER"], 0)
         self.assertEqual(self.editor.draft.settings["IMAGE_UPSCALER"], "realesrgan")
+        self.assertTrue(self.editor.draft.settings["AUTO_APPLY_DRAFT_CHANGES"])
+        self.assertFalse(self.editor.draft.settings["BACKUP_JSON_FILES"])
         self.assertTrue(self.editor.save())
         self.assertEqual(Draft(self.root).settings["MOD_VERSION"], "6.0")
         self.assertEqual(Draft(self.root).settings, self.editor.draft.settings)
@@ -572,6 +576,20 @@ class GuiTests(unittest.TestCase):
         with patch("editor.messagebox.askyesnocancel", return_value=False):
             self.assertTrue(self.editor.resolve_fields())
         self.assertEqual(self.editor.variables["x"].get(), "0")
+
+    def test_auto_apply_draft_changes_skips_prompt_and_applies_edits(self):
+        self.select_mask()
+        self.editor.variables["x"].set("99")
+        settings = deepcopy(self.editor.draft.settings)
+        settings["AUTO_APPLY_DRAFT_CHANGES"] = True
+        self.editor.draft.set_settings(settings)
+
+        with patch("editor.messagebox.askyesnocancel") as prompt:
+            self.assertTrue(self.editor.resolve_fields())
+
+        prompt.assert_not_called()
+        self.assertEqual(self.editor.draft.agents["Alice"][0]["select"]["offset"], [99, 0])
+        self.assertFalse(self.editor.fields_dirty())
 
     def test_navigation_applies_previous_fields_without_snapping_back(self):
         items = {data[2]: item for item, data in self.editor.tree_items.items() if data[2]}
