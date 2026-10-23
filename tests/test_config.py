@@ -38,7 +38,7 @@ class ConfigTests(unittest.TestCase):
             ("SOURCE_DIRS", ["sources/M6", "sources/M6"]),
             ("SOURCE_DIRS", ["sources/M6", "other/M6"]),
             ("CLEAN_EXPORTS", 1), ("SEPARATE_INIS", "false"),
-            ("BACKUP_JSON_FILES", 1),
+            ("BACKUP_FILES", 1),
             ("CONTRAST_MULTIPLIER", True), ("SATURATION_MULTIPLIER", float("inf")),
             ("SATURATION_MULTIPLIER", -1), ("FALLBACK_MODE", "unknown"),
             ("CONTRAST_MULTIPLIER", 10 ** 1000),
@@ -54,7 +54,8 @@ class ConfigTests(unittest.TestCase):
     def test_safe_export_paths(self):
         for path in (".", "..", str(Path.home()), self.root.anchor, "sources", "sources/M6/out",
                      "masks", ".git/cache", "tests", "config.json", "agents-chibi.json",
-                     "screenshots/output", "models", "upscaler.py", "requirements-upscaler.txt"):
+                     "screenshots/output", "models", "backup", "backup/output",
+                     "upscaler.py", "requirements-upscaler.txt"):
             with self.subTest(path=path):
                 settings = deepcopy(DEFAULTS)
                 settings["EXPORT_DIR"] = path
@@ -100,12 +101,33 @@ class ConfigTests(unittest.TestCase):
         settings = deepcopy(self.settings)
         settings.pop("IMAGE_UPSCALER")
         settings.pop("AUTO_APPLY_DRAFT_CHANGES")
-        settings.pop("BACKUP_JSON_FILES")
+        settings.pop("BACKUP_FILES")
         path = self.root / "config.json"
         path.write_text(json.dumps(settings), encoding="utf-8")
         before = path.read_bytes()
         self.assertEqual(load_config(self.root), self.settings)
         self.assertEqual(path.read_bytes(), before)
+
+    def test_legacy_backup_setting_is_renamed_without_changing_its_value(self):
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled):
+                settings = deepcopy(self.settings)
+                settings.pop("BACKUP_FILES")
+                settings["BACKUP_JSON_FILES"] = enabled
+                path = self.root / "config.json"
+                path.write_text(json.dumps(settings), encoding="utf-8")
+                before = path.read_bytes()
+                loaded = load_config(self.root)
+                self.assertIs(loaded["BACKUP_FILES"], enabled)
+                self.assertNotIn("BACKUP_JSON_FILES", loaded)
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_duplicate_backup_settings_are_rejected(self):
+        settings = deepcopy(self.settings)
+        settings["BACKUP_JSON_FILES"] = False
+        (self.root / "config.json").write_text(json.dumps(settings), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "Use only BACKUP_FILES"):
+            load_config(self.root)
 
     def test_auto_apply_setting_must_be_boolean(self):
         settings = deepcopy(DEFAULTS)

@@ -20,10 +20,15 @@ def main() -> None:
     export_dir: Path = resolve_path(ROOT, settings["EXPORT_DIR"])
     gen_masks()
     if settings["CLEAN_EXPORTS"]:
-        print(f"Force clean requested! Recreating {export_dir}...")
+        print(f"Force clean requested! Clearing contents of {export_dir}...")
         if export_dir.exists():
-            shutil.rmtree(export_dir)
-        export_dir.mkdir(parents=True)
+            for child in export_dir.iterdir():
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        else:
+            export_dir.mkdir(parents=True)
     gen_textures()
     create_ini()
     export()

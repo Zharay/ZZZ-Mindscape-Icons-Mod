@@ -7,7 +7,7 @@
   "CLEAN_EXPORTS": true,
   "SEPARATE_INIS": true,
   "AUTO_APPLY_DRAFT_CHANGES": true,
-  "BACKUP_JSON_FILES": false,
+  "BACKUP_FILES": true,
   "CONTRAST_MULTIPLIER": 1.0,
   "SATURATION_MULTIPLIER": 1.2,
   "IMAGE_UPSCALER": "realesrgan",
