@@ -259,6 +259,51 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("not found! Skipping...", result.stdout)
         self.assertTrue((export / "mindscape_icons_v3.3.zip").exists())
 
+    def test_cleanup_preserves_export_directory_and_removes_all_contents(self):
+        export = self.root / "export"
+        nested = export / "old" / "nested"
+        nested.mkdir(parents=True)
+        (nested / "old.txt").write_text("old")
+        (export / "old.zip").write_bytes(b"old")
+        (export / ".hidden").write_text("old")
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "from pathlib import Path\n"
+             "from unittest.mock import patch\n"
+             "import main\n"
+             "remove = main.shutil.rmtree\n"
+             "def remove_child(path, *args, **kwargs):\n"
+             "    assert Path(path).resolve() != Path('export').resolve(), "
+             "'Export directory must not be deleted'\n"
+             "    return remove(path, *args, **kwargs)\n"
+             "with patch('main.shutil.rmtree', side_effect=remove_child):\n"
+             "    main.main()\n"],
+            cwd=self.root, capture_output=True, text=True, timeout=45,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(export.is_dir())
+        self.assertFalse((export / "old").exists())
+        self.assertFalse((export / "old.zip").exists())
+        self.assertFalse((export / ".hidden").exists())
+        self.assertTrue((export / "mindscape_icons_v3.3.zip").exists())
+
+    def test_cleanup_unlinks_directory_symlinks_without_deleting_targets(self):
+        export = self.root / "export"
+        export.mkdir()
+        outside = self.root / "keep"
+        outside.mkdir()
+        marker = outside / "keep.txt"
+        marker.write_text("preserve me")
+        link = export / "linked"
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except OSError:
+            self.skipTest("Creating symlinks is unavailable to this account")
+        result = self.run_pipeline()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(link.is_symlink())
+        self.assertEqual(marker.read_text(), "preserve me")
+
     def test_main_import_does_not_generate(self):
         result = subprocess.run(
             [sys.executable, "-c", "import main; print('imported')"], cwd=self.root,
@@ -467,7 +512,7 @@ class GuiTests(unittest.TestCase):
         dialog.variables["CLEAN_EXPORTS"].set(False)
         dialog.variables["SEPARATE_INIS"].set(False)
         dialog.variables["AUTO_APPLY_DRAFT_CHANGES"].set(True)
-        dialog.variables["BACKUP_JSON_FILES"].set(False)
+        dialog.variables["BACKUP_FILES"].set(False)
         dialog.variables["CONTRAST_MULTIPLIER"].set("0.5")
         dialog.variables["SATURATION_MULTIPLIER"].set("0")
         dialog.variables["IMAGE_UPSCALER"].set("realesrgan")
@@ -478,7 +523,7 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.editor.draft.settings["SATURATION_MULTIPLIER"], 0)
         self.assertEqual(self.editor.draft.settings["IMAGE_UPSCALER"], "realesrgan")
         self.assertTrue(self.editor.draft.settings["AUTO_APPLY_DRAFT_CHANGES"])
-        self.assertFalse(self.editor.draft.settings["BACKUP_JSON_FILES"])
+        self.assertFalse(self.editor.draft.settings["BACKUP_FILES"])
         self.assertTrue(self.editor.save())
         self.assertEqual(Draft(self.root).settings["MOD_VERSION"], "6.0")
         self.assertEqual(Draft(self.root).settings, self.editor.draft.settings)
@@ -498,9 +543,33 @@ class GuiTests(unittest.TestCase):
         self.assertIn("Output 512 x 500", self.editor.preview_text.get())
         self.assertEqual(position.call_args.args[-1], "realesrgan")
         self.assertEqual(render.call_args.args[-1], "realesrgan")
+        self.assertFalse(position.call_args.kwargs["denoise"])
+        self.assertFalse(render.call_args.kwargs["denoise"])
         with patch("upscaler._upscale_rgb", side_effect=UpscaleError("GPU unavailable")):
             self.editor.preview()
         self.assertIn("GPU unavailable", self.editor.preview_text.get())
+
+    def test_chibi_cleanup_reaches_both_previews(self):
+        from textures import position_image, render_mask
+        from upscaler import _denoise_rgb, _resize_denoised
+
+        self.select_mask()
+        self.editor.variant.set("sources/Chibi")
+        self.editor.image = Image.new("RGBA", (128, 128), (100, 80, 200, 200))
+        self.editor.variables["scale"].set("4")
+        _resize_denoised.cache_clear()
+        _denoise_rgb.cache_clear()
+        self.addCleanup(_resize_denoised.cache_clear)
+        self.addCleanup(_denoise_rgb.cache_clear)
+        with patch("editor.position_image", wraps=position_image) as position, patch(
+            "editor.render_mask", wraps=render_mask,
+        ) as render:
+            self.editor.preview()
+        self.assertIn("Output 512 x 500", self.editor.preview_text.get())
+        self.assertTrue(position.call_args.kwargs["denoise"])
+        self.assertTrue(render.call_args.kwargs["denoise"])
+        self.assertEqual(_denoise_rgb.cache_info().misses, 1)
+        self.assertEqual(_resize_denoised.cache_info().hits, 1)
 
     def test_generate_gates_unsaved_and_cleanup_cancel(self):
         self.editor.draft.add_agent("New")

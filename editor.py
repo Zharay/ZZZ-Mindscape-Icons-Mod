@@ -644,8 +644,10 @@ class Editor:
             spec = MASK_SPECS[kind]
             offset = (entry["offset"][0], entry["offset"][1])
             upscaler = self.draft.settings["IMAGE_UPSCALER"]
+            denoise = is_chibi(self.variant.get())
             positioned = position_image(
                 mask.size, self.image, offset, entry["scale"], entry["rotation"], upscaler,
+                denoise=denoise,
             )
             overlay = Image.alpha_composite(checkerboard(mask.size), positioned)
             outside = ImageChops.invert(mask.getchannel("A")).point(
@@ -664,6 +666,7 @@ class Editor:
                 spec.final_size, self.draft.settings["CONTRAST_MULTIPLIER"],
                 self.draft.settings["SATURATION_MULTIPLIER"],
                 upscaler,
+                denoise=denoise,
             )
             result = Image.alpha_composite(checkerboard(result.size), result)
             width, height = max(self.canvas.winfo_width(), 400), max(self.canvas.winfo_height(), 200)
@@ -900,7 +903,7 @@ class Editor:
             export = resolve_path(self.draft.root, settings["EXPORT_DIR"])
             if settings["CLEAN_EXPORTS"] and not messagebox.askyesno(
                 "Confirm export cleanup",
-                f"Generation will DELETE and recreate:\n{export}\n\nContinue?",
+                f"Generation will DELETE all contents of:\n{export}\n\nThe folder itself will be kept.\n\nContinue?",
                 parent=self.window,
             ):
                 return
@@ -994,13 +997,13 @@ class ConfigDialog:
             "CUR_AGENT": "Only generate this agent (blank = all)",
             "EXPORT_DIR": "Output/ZIP directory; cleanup deletes its contents",
             "FALLBACK_MODE": "Legacy option; cross-variant fallback is not implemented",
-            "CLEAN_EXPORTS": "Delete and recreate output directory before generating",
+            "CLEAN_EXPORTS": "Delete output directory contents before generating; keep the folder",
             "SEPARATE_INIS": "Separate Select / Tab / Round INIs",
             "AUTO_APPLY_DRAFT_CHANGES": "Apply edited mask fields to the draft without prompting",
-            "BACKUP_JSON_FILES": "Create .bak copies of JSON files when saving",
+            "BACKUP_FILES": "Back up replaced files in a backup subfolder beside each original",
             "CONTRAST_MULTIPLIER": "Contrast: 1 unchanged, 0 flat",
             "SATURATION_MULTIPLIER": "Saturation: 1 unchanged, 0 grayscale",
-            "IMAGE_UPSCALER": "Enlargement: Pillow or Real-ESRGAN anime (NVIDIA GPU; first use downloads model)",
+            "IMAGE_UPSCALER": "Enlargement: Pillow or Real-ESRGAN anime (NVIDIA GPU)",
         }
         row = 0
         for key in DEFAULTS:
@@ -1053,13 +1056,8 @@ class ConfigDialog:
         self.paths = tk.StringVar()
         ttk.Label(frame, textvariable=self.paths, wraplength=850).grid(row=row, column=0, columnspan=3, sticky="w", pady=8)
         self.update_paths()
-        row += 1
-        ttk.Label(
-            frame, text="Apply changes the draft only. Use the main window's Save to persist config.json.\n"
-            "Removing a variant never deletes its source files. Artwork and transforms remain shared as described in the editor.",
-        ).grid(row=row, column=0, columnspan=3, sticky="w", pady=8)
-        row += 1
-        ttk.Button(frame, text="Apply Config to Draft", command=self.apply).grid(row=row, column=1)
+        row += 2
+        ttk.Button(frame, text="Apply", command=self.apply).grid(row=row, column=1)
         ttk.Button(frame, text="Cancel", command=self.window.destroy).grid(row=row, column=2)
         self.window.protocol("WM_DELETE_WINDOW", self.window.destroy)
 
@@ -1105,7 +1103,9 @@ class ConfigDialog:
         try:
             for key in ("CONTRAST_MULTIPLIER", "SATURATION_MULTIPLIER"):
                 values[key] = float(str(values[key]))
-            self.editor.draft.set_settings(values)
+            backups = self.editor.draft.save_settings(values)
+            if backups:
+                self.editor.append_log("Config backups:\n" + "\n".join(map(str, backups)) + "\n")
             sources = self.editor.draft.settings["SOURCE_DIRS"]
             self.editor.variants.configure(values=sources)
             if self.editor.variant.get() not in sources:
@@ -1116,7 +1116,7 @@ class ConfigDialog:
             else:
                 self.editor.load_artwork()
             self.editor.update_title()
-            self.editor.status.set("Configuration applied to draft; Save to persist.")
+            self.editor.status.set("Configuration saved.")
             self.window.destroy()
         except USER_ERRORS as exc:
             messagebox.showerror("Invalid configuration", str(exc), parent=self.window)

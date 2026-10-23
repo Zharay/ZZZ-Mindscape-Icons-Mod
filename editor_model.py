@@ -235,8 +235,6 @@ class Draft:
             self.imports or self._hash_repairs_pending or self._agent_order_repair_pending
             or self.agents != self.saved_agents
             or self.agents_for("Chibi") != self.saved_chibi_agents
-            or (any(is_chibi(source) for source in self.settings["SOURCE_DIRS"])
-                and self.originals[self.root / "agents-chibi.json"] is None)
             or self.settings != self.saved_settings
         )
 
@@ -292,6 +290,24 @@ class Draft:
         if any(path not in self.import_targets(settings) for path in self.imports):
             raise ValueError("Discard staged imports before removing or retargeting their source directories.")
         self.settings = settings
+
+    def save_settings(self, value: object) -> list[Path]:
+        previous = self.settings
+        try:
+            self.set_settings(value)
+            validate_agents(self.saved_agents, self.settings, self.root)
+            path = self.root / "config.json"
+            if file_bytes(path) != self.originals[path]:
+                raise ValueError(f"File changed outside the editor; reload before saving: {path}")
+            writes = {}
+            if self.settings != self.saved_settings or self.originals[path] is None:
+                writes[path] = (json.dumps(self.settings, indent=2, allow_nan=False) + "\n").encode("utf-8")
+            backups = self._write_files(writes)
+        except (OSError, ValueError):
+            self.settings = previous
+            raise
+        self.saved_settings = deepcopy(self.settings)
+        return backups
 
     def add_agent(self, name: str) -> None:
         candidate = deepcopy(self.agents)
@@ -438,6 +454,16 @@ class Draft:
             buffer = io.BytesIO()
             image.save(buffer, format="PNG")
             writes[path] = buffer.getvalue()
+        backups = self._write_files(writes)
+        self.saved_agents = deepcopy(self.agents)
+        self.saved_chibi_agents = deepcopy(self.chibi_agents)
+        self._hash_repairs_pending = False
+        self._agent_order_repair_pending = False
+        self.saved_settings = deepcopy(self.settings)
+        self.imports.clear()
+        return backups
+
+    def _write_files(self, writes: dict[Path, bytes]) -> list[Path]:
         if not writes:
             return []
         temporary: dict[Path, Path] = {}
@@ -455,12 +481,10 @@ class Draft:
                     stream.flush()
                     os.fsync(stream.fileno())
                 if path.exists():
-                    keep_backup = (
-                        path.suffix.lower() != ".json"
-                        or self.settings["BACKUP_JSON_FILES"]
-                    )
-                    if keep_backup:
-                        backup = path.with_name(f"{path.name}.{token}.bak")
+                    if self.settings["BACKUP_FILES"]:
+                        backup_dir = path.parent / "backup"
+                        backup_dir.mkdir(exist_ok=True)
+                        backup = backup_dir / f"{path.name}.{token}.bak"
                         backups[path] = backup
                     else:
                         with tempfile.NamedTemporaryFile(
@@ -507,10 +531,4 @@ class Draft:
                     rollback.unlink()
         for path, content in writes.items():
             self.originals[path] = content
-        self.saved_agents = deepcopy(self.agents)
-        self.saved_chibi_agents = deepcopy(self.chibi_agents)
-        self._hash_repairs_pending = False
-        self._agent_order_repair_pending = False
-        self.saved_settings = deepcopy(self.settings)
-        self.imports.clear()
         return list(backups.values())

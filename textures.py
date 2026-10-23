@@ -64,11 +64,13 @@ def resolve_source(
 def position_image(
     mask_size: tuple[int, int], image: Image.Image,
     offset: tuple[int, int], scale: float, rotation: float, upscaler: Upscaler = "pillow",
+    *, denoise: bool = False,
 ) -> Image.Image:
     image = image.convert("RGBA")
-    if scale != 1.0:
+    if scale != 1.0 or denoise:
         image = resize_artwork(
-            image, (int(image.width * scale), int(image.height * scale)), upscaler
+            image, (int(image.width * scale), int(image.height * scale)), upscaler,
+            denoise=denoise,
         )
     if rotation != 0:
         image = image.rotate(-rotation, expand=True, resample=Image.Resampling.BICUBIC)
@@ -85,9 +87,12 @@ def render_mask(
     image_rotation: float = 0.0, final_size: tuple[int, int] | None = None,
     contrast: float = 1.0, saturation: float = 1.2,
     upscaler: Upscaler = "pillow",
+    *, denoise: bool = False,
 ) -> Image.Image:
     mask = mask.convert("RGBA")
-    positioned = position_image(mask.size, image, image_offset, image_scale, image_rotation, upscaler)
+    positioned = position_image(
+        mask.size, image, image_offset, image_scale, image_rotation, upscaler, denoise=denoise,
+    )
     # Preserve the original floor(alpha * mask_alpha / 255) and RGB semantics.
     positioned.putalpha(ImageChops.multiply(positioned.getchannel("A"), mask.getchannel("A")))
     result = Image.new("RGBA", size)
@@ -120,6 +125,7 @@ def apply_mask(
         result = render_mask(
             size, mask, image, image_offset, image_scale, image_rotation, final_size,
             CONTRAST_MULTIPLIER, SATURATION_MULTIPLIER, IMAGE_UPSCALER,
+            denoise=is_chibi(Path(image_path).parent),
         )
     png_info = PngImagePlugin.PngInfo()
     png_info.add(b"gAMA", struct.pack(">I", 45455))

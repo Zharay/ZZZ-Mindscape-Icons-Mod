@@ -26,9 +26,9 @@ page.
 ## Building
 ### Prerequisites
 - Python 3.12
-- [Pillow](https://pypi.org/project/pillow/) library:
+- Image processing libraries (Pillow and OpenCV):
   ```powershell
-  python -m pip install Pillow
+  python -m pip install -r requirements.txt
   ```
 - (Optional) Real-ESRGAN for upscaling (Requires an NVIDIA GPU)
   ```powershell
@@ -53,6 +53,13 @@ its orientation. Flips are saved only when you choose **Save**.
 M3 and M6 images are shared across an agent's icon shapes. Chibi uses a separate
 image for each shape, with its own adjustments. Check the previews before generating the mod.
 
+Chibi artwork is automatically cleaned before resizing in both previews and
+exports. Pillow uses an edge-preserving bilateral filter; Real-ESRGAN uses
+[1x DeJPG OmniSR by Philip Hofmann](https://huggingface.co/Phips/1xDeJPG_OmniSR), downloaded on first
+use. Cleaned and resized images are cached during the session, so moving or
+rotating the same artwork does not repeat cleanup or upscaling. Original source
+files and transparency are preserved. M3 and M6 are not denoised.
+
 Agents with missing artwork appear red for the selected variant. Details are
 listed in **Generation Log**, without pop-ups. Missing icons keep the game's
 original artwork. In game, **Ctrl+Space** switches between M6, M3, and Chibi.
@@ -64,10 +71,13 @@ Config** in the editor. You can also edit `config.json` directly, but close the
 editor first. The settings control the mod name, image variants, output folder,
 and image appearance.
 
+Choose **Apply** to save configuration changes immediately. These changes won't
+trigger a save prompt when closing the editor; other unsaved edits still will.
+
 Enable `AUTO_APPLY_DRAFT_CHANGES` to apply edited mask fields to the draft
 automatically whenever the editor would otherwise ask whether to apply them.
-`BACKUP_JSON_FILES` controls whether saving creates `.bak` copies of JSON files;
-it is enabled by default.
+`BACKUP_FILES` controls backups of all replaced files, including artwork, and is
+enabled by default. Backups go into a `backup` subfolder beside each original file.
 
 For sharper enlargements of small anime artwork, optionally install
 `python -m pip install -r requirements-upscaler.txt` and choose
@@ -86,3 +96,4 @@ into ZZMI's Mods folder to use it in the game.
 
 **Warning:** By default, generating the mod replaces the contents of the
 configured output folder.
+The folder itself is kept.

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import warnings
 import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -16,6 +17,7 @@ from masks import preview_mask
 from support import project
 from textures import MASK_SPECS, apply_mask, position_image, render_mask
 from upscaler import MODEL_PATH, UpscaleError, _download_model, _upscale_rgb, load_model, resize_artwork
+from upscaler import _load_rgb_model
 
 
 def artwork():
@@ -28,6 +30,51 @@ def artwork():
 
 
 class UpscalerTests(unittest.TestCase):
+    def test_model_loading_suppresses_only_upstream_meshgrid_warning(self):
+        meshgrid_warning = (
+            "torch.meshgrid: in an upcoming release, it will be required "
+            "to pass the indexing argument."
+        )
+
+        class Descriptor:
+            scale = 4
+            input_channels = 3
+            output_channels = 3
+
+            def cuda(self):
+                return self
+
+            def eval(self):
+                return self
+
+        def construct(weights):
+            warnings.warn_explicit(
+                meshgrid_warning, UserWarning, "functional.py", 554, module="torch.functional",
+            )
+            warnings.warn("Other model warning", UserWarning)
+            return Descriptor()
+
+        torch = Mock()
+        torch.cuda.is_available.return_value = True
+        torch.load.return_value = {"params": {}}
+        spandrel = Mock()
+        spandrel.ImageModelDescriptor = Descriptor
+        spandrel.ModelLoader.return_value.load_from_state_dict.side_effect = construct
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "model.pth"
+            path.touch()
+            with patch.dict(sys.modules, {"torch": torch, "spandrel": spandrel}), \
+                    warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                model = _load_rgb_model(path, "unused", 4)
+                self.assertIsInstance(model, Descriptor)
+                self.assertEqual([str(item.message) for item in caught], ["Other model warning"])
+                warnings.warn_explicit(
+                    meshgrid_warning, UserWarning, "functional.py", 554,
+                    module="torch.functional",
+                )
+                self.assertEqual(len(caught), 2)
+
     def test_pillow_is_pixel_identical_and_ml_is_lazy(self):
         image = artwork()
         with patch("upscaler.load_model", side_effect=AssertionError("ML must not load")):
@@ -141,7 +188,7 @@ class UpscalerTests(unittest.TestCase):
         image = artwork()
         with patch("textures.resize_artwork", wraps=resize_artwork) as resize:
             position_image((512, 500), image, (12, -8), 0.5, 45, "realesrgan")
-        resize.assert_called_once_with(image, (90, 90), "realesrgan")
+        resize.assert_called_once_with(image, (90, 90), "realesrgan", denoise=False)
 
 
 @unittest.skipUnless(os.environ.get("TEST_REAL_UPSCALER") == "1", "Opt-in NVIDIA/model integration")

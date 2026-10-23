@@ -10,7 +10,7 @@ from tkinter import ttk
 
 from PIL import Image
 
-from editor import DARK_THEME, Editor, apply_dark_theme
+from editor import DARK_THEME, ConfigDialog, Editor, apply_dark_theme
 from editor_model import (
     BLANK_HASH, Draft, duplicate_hashes, hash_from_filename, validate_mask,
     validate_transform_image,
@@ -38,9 +38,9 @@ class DraftTests(unittest.TestCase):
         self.assertEqual((self.root / "agents.json").read_bytes(), original)
         self.assertEqual(list(self.root.rglob("*.bak")), [])
 
-    def test_json_backups_can_be_disabled_without_disabling_artwork_backups(self):
+    def test_backups_can_be_disabled_for_json_and_artwork(self):
         settings = deepcopy(self.draft.settings)
-        settings["BACKUP_JSON_FILES"] = False
+        settings["BACKUP_FILES"] = False
         self.draft.set_settings(settings)
         self.draft.add_agent("Bob")
         target = self.draft.target("sources/M6", "Alice", 0)
@@ -49,20 +49,21 @@ class DraftTests(unittest.TestCase):
 
         backups = self.draft.save()
 
-        self.assertEqual(len(backups), 1)
-        self.assertTrue(backups[0].name.startswith("AliceM6.png."))
-        self.assertTrue(backups[0].name.endswith(".bak"))
-        self.assertEqual(list(self.root.rglob("*.json.*.bak")), [])
-        self.assertEqual(len(list(self.root.rglob("*.png.*.bak"))), 1)
+        self.assertEqual(backups, [])
+        self.assertEqual(list(self.root.rglob("*.bak")), [])
+        self.assertEqual(list(self.root.rglob("backup")), [])
+        self.assertEqual(list(self.root.rglob(".editor-*")), [])
+        with Image.open(target) as image:
+            self.assertEqual(image.getpixel((0, 0)), (0, 0, 255, 255))
 
-    def test_disabled_json_backups_preserve_atomic_rollback(self):
+    def test_disabled_backups_preserve_atomic_rollback(self):
         agents_path = self.root / "agents.json"
         config_path = self.root / "config.json"
         original_agents = agents_path.read_bytes()
         original_config = config_path.read_bytes()
         self.draft.add_agent("Bob")
         settings = deepcopy(self.draft.settings)
-        settings["BACKUP_JSON_FILES"] = False
+        settings["BACKUP_FILES"] = False
         self.draft.set_settings(settings)
         replace = os.replace
         calls = 0
@@ -82,6 +83,79 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(config_path.read_bytes(), original_config)
         self.assertEqual(list(self.root.rglob(".editor-rollback-*")), [])
         self.assertEqual(list(self.root.rglob("*.json.*.bak")), [])
+
+    def test_backups_use_each_original_files_local_backup_folder(self):
+        self.enable_chibi()
+        self.draft.save()
+        originals = {}
+        for source, kind in (
+            ("sources/M6", "select"), ("sources/M3", "tab"),
+            ("sources/Chibi", "select"), ("sources/Chibi", "tab"),
+            ("sources/Chibi", "round"),
+        ):
+            target = self.draft.target(source, "Alice", 0, kind)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGBA", (12, 14), "red").save(target)
+            originals[target] = target.read_bytes()
+            self.draft.stage_image(source, "Alice", 0, self.artwork("blue"), kind=kind)
+        for name in ("agents.json", "agents-chibi.json"):
+            path = self.root / name
+            originals[path] = path.read_bytes()
+        self.draft.add_agent("Bob")
+
+        backups = self.draft.save()
+
+        self.assertEqual(len(backups), len(originals))
+        for original, content in originals.items():
+            matches = [
+                backup for backup in backups
+                if backup.parent == original.parent / "backup"
+                and backup.name.startswith(original.name + ".")
+            ]
+            self.assertEqual(len(matches), 1, str(original))
+            self.assertEqual(matches[0].read_bytes(), content)
+        self.assertEqual(list(self.root.glob("*.bak")), [])
+        self.assertEqual(self.draft.save(), [])
+
+    def test_disabled_backups_restore_overwritten_artwork_on_save_failure(self):
+        settings = deepcopy(self.draft.settings)
+        settings["BACKUP_FILES"] = False
+        self.draft.set_settings(settings)
+        originals = {self.root / "config.json": (self.root / "config.json").read_bytes()}
+        for source in self.draft.settings["SOURCE_DIRS"]:
+            target = self.draft.target(source, "Alice", 0)
+            Image.new("RGBA", (12, 14), "red").save(target)
+            originals[target] = target.read_bytes()
+            self.draft.stage_image(source, "Alice", 0, self.artwork("blue"))
+        replace = os.replace
+        calls = 0
+
+        def fail_third(source, target):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise OSError("Injected replacement failure")
+            return replace(source, target)
+
+        with patch("editor_model.os.replace", side_effect=fail_third):
+            with self.assertRaisesRegex(ValueError, "Previous files restored"):
+                self.draft.save()
+
+        for path, content in originals.items():
+            self.assertEqual(path.read_bytes(), content)
+        self.assertEqual(list(self.root.rglob("*.bak")), [])
+        self.assertEqual(list(self.root.rglob(".editor-*")), [])
+        self.assertTrue(self.draft.dirty)
+
+    def test_backup_folder_creation_failure_does_not_replace_original(self):
+        original = (self.root / "agents.json").read_bytes()
+        (self.root / "backup").write_text("not a directory", encoding="utf-8")
+        self.draft.add_agent("Bob")
+        with self.assertRaisesRegex(ValueError, "Save failed"):
+            self.draft.save()
+        self.assertEqual((self.root / "agents.json").read_bytes(), original)
+        self.assertEqual(list(self.root.rglob(".editor-*")), [])
+        self.assertTrue(self.draft.dirty)
 
     def enable_chibi(self):
         settings = deepcopy(self.draft.settings)
@@ -835,6 +909,140 @@ class DraftTests(unittest.TestCase):
         backups = self.draft.save()
         self.assertTrue(backups)
         self.assertEqual(Draft(self.root).settings, settings)
+
+    def config_dialog(self):
+        editor = self.editor()
+        editor.running = False
+        editor.current = None
+        editor.variants = Mock()
+        editor.variant = Mock()
+        editor.variant.get.return_value = "sources/M6"
+        editor.load_artwork = Mock()
+        editor.update_title = Mock()
+        editor.status = Mock()
+        editor.fields_dirty = Mock(return_value=False)
+        dialog = ConfigDialog.__new__(ConfigDialog)
+        dialog.editor = editor
+        dialog.window = Mock()
+        dialog.variables = {}
+        for key, value in self.draft.settings.items():
+            if key != "SOURCE_DIRS":
+                dialog.variables[key] = Mock()
+                dialog.variables[key].get.return_value = value
+        dialog.variables["MOD_VERSION"].get.return_value = "4.0"
+        dialog.sources = Mock()
+        dialog.sources.get.return_value = tuple(self.draft.settings["SOURCE_DIRS"])
+        return dialog
+
+    def test_config_apply_saves_immediately_and_close_does_not_prompt(self):
+        dialog = self.config_dialog()
+        with patch("editor.messagebox.showerror") as error:
+            dialog.apply()
+        error.assert_not_called()
+        self.assertEqual(Draft(self.root).settings["MOD_VERSION"], "4.0")
+        self.assertFalse(self.draft.dirty)
+        dialog.window.destroy.assert_called_once()
+        with patch("editor.messagebox.askyesnocancel") as prompt:
+            dialog.editor.close()
+        prompt.assert_not_called()
+        dialog.editor.window.destroy.assert_called_once()
+        self.assertEqual(self.draft.save(), [])
+
+    def test_config_apply_enabling_chibi_does_not_prompt_on_close(self):
+        dialog = self.config_dialog()
+        dialog.sources.get.return_value = ("sources/M6", "sources/M3", "sources/Chibi")
+        dialog.apply()
+        self.assertIn("sources/Chibi", Draft(self.root).settings["SOURCE_DIRS"])
+        self.assertFalse(self.draft.dirty)
+        with patch("editor.messagebox.askyesnocancel") as prompt:
+            dialog.editor.close()
+        prompt.assert_not_called()
+        dialog.editor.window.destroy.assert_called_once()
+        self.draft.save()
+        self.assertTrue((self.root / "agents-chibi.json").exists())
+        self.assertFalse(Draft(self.root).dirty)
+
+    def test_config_apply_does_not_persist_a_draft_only_agent_selection(self):
+        self.draft.add_agent("Bob")
+        dialog = self.config_dialog()
+        dialog.variables["CUR_AGENT"].get.return_value = "Bob"
+        with patch("editor.messagebox.showerror") as error:
+            dialog.apply()
+        error.assert_called_once()
+        self.assertIsNone(Draft(self.root).settings["CUR_AGENT"])
+        self.assertIsNone(self.draft.settings["CUR_AGENT"])
+        self.assertIn("Bob", self.draft.agents)
+        dialog.window.destroy.assert_not_called()
+
+    def test_config_apply_preserves_unsaved_agents_and_imports(self):
+        original = (self.root / "agents.json").read_bytes()
+        self.draft.add_agent("Bob")
+        target = self.draft.stage_image("sources/M6", "Alice", 0, self.artwork())
+        dialog = self.config_dialog()
+        dialog.apply()
+        self.assertEqual(Draft(self.root).settings["MOD_VERSION"], "4.0")
+        self.assertEqual((self.root / "agents.json").read_bytes(), original)
+        self.assertFalse(target.exists())
+        self.assertIn(target, self.draft.imports)
+        self.assertTrue(self.draft.dirty)
+        with patch("editor.messagebox.askyesnocancel", return_value=None) as prompt:
+            dialog.editor.close()
+        prompt.assert_called_once()
+        dialog.editor.window.destroy.assert_not_called()
+        self.draft.save()
+        self.assertIn("Bob", Draft(self.root).agents)
+        self.assertTrue(target.exists())
+
+    def test_config_apply_honors_disabled_backups(self):
+        dialog = self.config_dialog()
+        dialog.variables["BACKUP_FILES"].get.return_value = False
+        dialog.apply()
+        self.assertEqual(Draft(self.root).settings["MOD_VERSION"], "4.0")
+        self.assertEqual(list(self.root.rglob("*.bak")), [])
+        self.assertEqual(list(self.root.rglob(".editor-*")), [])
+
+    def test_config_apply_keeps_backups_and_can_save_again(self):
+        original = (self.root / "config.json").read_bytes()
+        dialog = self.config_dialog()
+        dialog.apply()
+        backups = list((self.root / "backup").glob("config.json.*.bak"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), original)
+        dialog.variables["MOD_VERSION"].get.return_value = "5.0"
+        dialog.apply()
+        self.assertEqual(Draft(self.root).settings["MOD_VERSION"], "5.0")
+        self.assertFalse(self.draft.dirty)
+
+    def test_config_apply_failure_restores_settings_and_keeps_dialog_open(self):
+        original = (self.root / "config.json").read_bytes()
+        settings = deepcopy(self.draft.settings)
+        dialog = self.config_dialog()
+        with (
+            patch("editor_model.os.replace", side_effect=OSError("Injected failure")),
+            patch("editor.messagebox.showerror") as error,
+        ):
+            dialog.apply()
+        error.assert_called_once()
+        self.assertIn("Save failed", error.call_args.args[1])
+        self.assertEqual((self.root / "config.json").read_bytes(), original)
+        self.assertEqual(self.draft.settings, settings)
+        self.assertFalse(self.draft.dirty)
+        dialog.window.destroy.assert_not_called()
+        dialog.editor.load_artwork.assert_not_called()
+
+    def test_config_apply_rejects_external_config_changes(self):
+        dialog = self.config_dialog()
+        path = self.root / "config.json"
+        external = path.read_bytes() + b"\n"
+        path.write_bytes(external)
+        settings = deepcopy(self.draft.settings)
+        with patch("editor.messagebox.showerror") as error:
+            dialog.apply()
+        error.assert_called_once()
+        self.assertIn("changed outside", error.call_args.args[1])
+        self.assertEqual(path.read_bytes(), external)
+        self.assertEqual(self.draft.settings, settings)
+        dialog.window.destroy.assert_not_called()
 
     def test_config_cannot_orphan_import(self):
         self.draft.stage_image("sources/M6", "Alice", 0, self.artwork())

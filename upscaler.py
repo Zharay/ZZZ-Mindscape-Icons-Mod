@@ -1,9 +1,10 @@
-"""Optional local Real-ESRGAN inference for enlarged artwork."""
+"""Cached, alpha-preserving artwork cleanup and optional neural upscaling."""
 
 from __future__ import annotations
 
 import shutil
 import tempfile
+import warnings
 from functools import lru_cache
 from pathlib import Path
 from pickle import UnpicklingError
@@ -21,26 +22,32 @@ MODEL_URL = (
     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/" + MODEL_NAME
 )
 MODEL_PATH = Path(__file__).resolve().parent / "models" / MODEL_NAME
-TILE_SIZE = 128
+DEJPG_NAME = "1xDeJPG_OmniSR.safetensors"
+DEJPG_URL = (
+    "https://huggingface.co/Phips/1xDeJPG_OmniSR/resolve/"
+    "5884f99cc5ff5b146c9a9eeae8699c79bbf94e35/" + DEJPG_NAME
+)
+DEJPG_PATH = MODEL_PATH.parent / DEJPG_NAME
+TILE_SIZE = 400
 TILE_PAD = 16
 
 
 class UpscaleError(RuntimeError):
-    """An explicitly selected ML backend could not run."""
+    """Artwork cleanup or the selected upscaling backend could not run."""
 
 
-def _download_model(path: Path) -> None:
+def _download_model(path: Path, url: str = MODEL_URL) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading {MODEL_NAME} (first use only)...", flush=True)
+    print(f"Downloading {path.name} (first use only)...", flush=True)
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".tmp", delete=False) as output:
             temporary = Path(output.name)
-            with urlopen(MODEL_URL, timeout=60) as response:
+            with urlopen(url, timeout=60) as response:
                 shutil.copyfileobj(response, output)
         temporary.replace(path)
     except OSError as exc:
-        raise UpscaleError(f"Unable to download {MODEL_NAME}: {exc}. Retry with internet access.") from exc
+        raise UpscaleError(f"Unable to download {path.name}: {exc}. Retry with internet access.") from exc
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -48,8 +55,18 @@ def _download_model(path: Path) -> None:
 
 @lru_cache(maxsize=1)
 def load_model() -> ImageModelDescriptor:
+    return _load_rgb_model(MODEL_PATH, MODEL_URL, 4)
+
+
+@lru_cache(maxsize=1)
+def load_dejpg_model() -> ImageModelDescriptor:
+    return _load_rgb_model(DEJPG_PATH, DEJPG_URL, 1)
+
+
+def _load_rgb_model(path: Path, url: str, scale: int) -> ImageModelDescriptor:
     try:
         import torch
+        from safetensors import SafetensorError
         from spandrel import ImageModelDescriptor, ModelLoader
     except ImportError as exc:
         raise UpscaleError(
@@ -61,30 +78,49 @@ def load_model() -> ImageModelDescriptor:
             "Real-ESRGAN requires an NVIDIA GPU, a current driver and CUDA-enabled PyTorch. "
             "Install requirements-upscaler.txt or select the pillow upscaler."
         )
-    if not MODEL_PATH.is_file():
-        _download_model(MODEL_PATH)
+    if not path.is_file():
+        _download_model(path, url)
     try:
-        # Load only tensor weights, never executable objects from the checkpoint.
-        checkpoint = torch.load(MODEL_PATH, map_location="cpu", weights_only=True)
-        weights = checkpoint["params_ema"] if "params_ema" in checkpoint else checkpoint["params"]
-        model = ModelLoader().load_from_state_dict(weights)
+        if path.suffix == ".safetensors":
+            weights = ModelLoader().load_state_dict_from_file(path)
+        else:
+            # Load only tensor weights, never executable objects from the checkpoint.
+            checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+            weights = checkpoint["params_ema"] if "params_ema" in checkpoint else checkpoint["params"]
+        with warnings.catch_warnings():
+            # Spandrel's OmniSR still relies on meshgrid's current "ij" default.
+            warnings.filterwarnings(
+                "ignore",
+                message=r"torch\.meshgrid: in an upcoming release, it will be required "
+                        r"to pass the indexing argument\.",
+                category=UserWarning,
+                module=r"torch\.functional",
+            )
+            model = ModelLoader().load_from_state_dict(weights)
         if not isinstance(model, ImageModelDescriptor) or (
-            model.scale != 4 or model.input_channels != 3 or model.output_channels != 3
+            model.scale != scale or model.input_channels != 3 or model.output_channels != 3
         ):
-            raise UpscaleError(f"{MODEL_PATH} must contain the RGB 4x anime model.")
+            raise UpscaleError(f"{path} must contain an RGB {scale}x model.")
         return model.cuda().eval()
-    except (OSError, ValueError, KeyError, RuntimeError, UnpicklingError, EOFError) as exc:
-        raise UpscaleError(f"Unable to load Real-ESRGAN model {MODEL_PATH}: {exc}") from exc
+    except (OSError, ValueError, KeyError, RuntimeError, UnpicklingError, EOFError,
+            SafetensorError) as exc:
+        raise UpscaleError(f"Unable to load model {path}: {exc}") from exc
 
 
 @lru_cache(maxsize=2)
 def _upscale_rgb(size: tuple[int, int], pixels: bytes) -> Image.Image:
-    model = load_model()
+    return _infer_rgb(size, pixels, load_model(), "Real-ESRGAN")
+
+
+def _infer_rgb(
+    size: tuple[int, int], pixels: bytes, model: ImageModelDescriptor, label: str,
+) -> Image.Image:
     import numpy as np
     import torch
 
     image = Image.frombytes("RGB", size, pixels)
-    result = Image.new("RGB", (image.width * 4, image.height * 4))
+    scale = model.scale
+    result = Image.new("RGB", (image.width * scale, image.height * scale))
     try:
         with torch.inference_mode():
             for top in range(0, image.height, TILE_SIZE):
@@ -96,25 +132,60 @@ def _upscale_rgb(size: tuple[int, int], pixels: bytes) -> Image.Image:
                     y1 = min(bottom + TILE_PAD, image.height)
                     tile = np.array(image.crop((x0, y0, x1, y1)), dtype=np.float32) / 255.0
                     tensor = torch.from_numpy(tile).permute(2, 0, 1).unsqueeze(0).cuda()
-                    output = model(tensor)[0, :, (top - y0) * 4:(bottom - y0) * 4,
-                                           (left - x0) * 4:(right - x0) * 4]
+                    output = model(tensor)[0, :, (top - y0) * scale:(bottom - y0) * scale,
+                                           (left - x0) * scale:(right - x0) * scale]
                     array = output.clamp(0, 1).mul(255).round().byte().permute(1, 2, 0).cpu().numpy()
-                    result.paste(Image.fromarray(array), (left * 4, top * 4))
+                    result.paste(Image.fromarray(array), (left * scale, top * scale))
     except RuntimeError as exc:
         raise UpscaleError(
-            f"Real-ESRGAN GPU inference failed: {exc}. "
+            f"{label} GPU inference failed: {exc}. "
             "Free GPU memory/check your NVIDIA driver, or select pillow."
         ) from exc
     return result
 
 
+@lru_cache(maxsize=16)
+def _denoise_rgb(size: tuple[int, int], pixels: bytes, backend: Upscaler) -> Image.Image:
+    if backend == "realesrgan":
+        return _infer_rgb(size, pixels, load_dejpg_model(), "1x DeJPG")
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as exc:
+        raise UpscaleError(
+            "Chibi cleanup with Pillow needs OpenCV. Run "
+            "'python -m pip install -r requirements.txt', then restart."
+        ) from exc
+    rgb = np.frombuffer(pixels, dtype=np.uint8).reshape(size[1], size[0], 3)
+    try:
+        filtered = cv2.bilateralFilter(rgb, d=9, sigmaColor=75, sigmaSpace=75)
+        #filtered = cv2.fastNlMeansDenoisingColored(rgb, None, h=5, hColor=8, templateWindowSize=7, searchWindowSize=21)
+    except cv2.error as exc:
+        raise UpscaleError(f"Chibi bilateral cleanup failed: {exc}") from exc
+    return Image.fromarray(filtered)
+
+
+@lru_cache(maxsize=4)
+def _resize_denoised(
+    source_size: tuple[int, int], pixels: bytes, size: tuple[int, int], backend: Upscaler,
+) -> Image.Image:
+    rgba = Image.frombytes("RGBA", source_size, pixels)
+    cleaned = _denoise_rgb(source_size, rgba.convert("RGB").tobytes(), backend).convert("RGBA")
+    cleaned.putalpha(rgba.getchannel("A"))
+    return resize_artwork(cleaned, size, backend)
+
+
 def resize_artwork(
     image: Image.Image, size: tuple[int, int], backend: Upscaler = "pillow",
+    *, denoise: bool = False,
 ) -> Image.Image:
     if backend not in ("pillow", "realesrgan"):
         raise ValueError(f"Unknown image upscaler: {backend}")
     if min(size) < 1:
         raise ValueError("Resize dimensions must be positive.")
+    if denoise:
+        rgba = image.convert("RGBA")
+        return _resize_denoised(rgba.size, rgba.tobytes(), size, backend).copy()
     if backend == "pillow" or (size[0] <= image.width and size[1] <= image.height):
         return image.resize(size, Image.Resampling.LANCZOS)
     rgba = image.convert("RGBA")

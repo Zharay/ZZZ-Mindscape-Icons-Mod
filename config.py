@@ -25,7 +25,7 @@ class Settings(TypedDict):
     CLEAN_EXPORTS: bool
     SEPARATE_INIS: bool
     AUTO_APPLY_DRAFT_CHANGES: bool
-    BACKUP_JSON_FILES: bool
+    BACKUP_FILES: bool
     CONTRAST_MULTIPLIER: float
     SATURATION_MULTIPLIER: float
     IMAGE_UPSCALER: Upscaler
@@ -41,7 +41,7 @@ DEFAULTS: Settings = {
     "CLEAN_EXPORTS": True,
     "SEPARATE_INIS": True,
     "AUTO_APPLY_DRAFT_CHANGES": False,
-    "BACKUP_JSON_FILES": True,
+    "BACKUP_FILES": True,
     "CONTRAST_MULTIPLIER": 1.0,
     "SATURATION_MULTIPLIER": 1.2,
     "IMAGE_UPSCALER": "pillow",
@@ -105,7 +105,7 @@ def validate_settings(value: object, root: Path = ROOT) -> Settings:
     if value["CUR_AGENT"] is not None and not isinstance(value["CUR_AGENT"], str):
         raise ValueError("CUR_AGENT must be an agent name or null.")
     for key in (
-        "CLEAN_EXPORTS", "SEPARATE_INIS", "AUTO_APPLY_DRAFT_CHANGES", "BACKUP_JSON_FILES",
+        "CLEAN_EXPORTS", "SEPARATE_INIS", "AUTO_APPLY_DRAFT_CHANGES", "BACKUP_FILES",
     ):
         if type(value[key]) is not bool:
             raise ValueError(f"{key} must be true or false.")
@@ -154,12 +154,12 @@ def validate_settings(value: object, root: Path = ROOT) -> Settings:
         raise ValueError(f"Export directory would contain the repository: {target}")
     protected_paths = [
         root / ".git", root / ".github", root / "masks", root / "screenshots",
-        root / "sources", root / "tests", root / "models",
+        root / "sources", root / "tests", root / "models", root / "backup",
         *resolved,
         *(root / name for name in (
             "agents.json", "agents-chibi.json", "config.json", "config.py", "editor.py", "editor_model.py",
             "main.py", "agent_data.py", "textures.py", "masks.py", "upscaler.py",
-            "requirements-upscaler.txt", "README.md",
+            "requirements.txt", "requirements-upscaler.txt", "README.md",
         )),
     ]
     if any(overlaps(target, path.resolve()) for path in protected_paths):
@@ -175,7 +175,11 @@ def load_config(root: Path = ROOT) -> Settings:
     value = read_json(path)
     # Older saved configurations predate these optional settings.
     if isinstance(value, dict):
-        for key in ("IMAGE_UPSCALER", "AUTO_APPLY_DRAFT_CHANGES", "BACKUP_JSON_FILES"):
+        if "BACKUP_JSON_FILES" in value:
+            if "BACKUP_FILES" in value:
+                raise ValueError("Use only BACKUP_FILES; remove the old BACKUP_JSON_FILES setting.")
+            value["BACKUP_FILES"] = value.pop("BACKUP_JSON_FILES")
+        for key in ("IMAGE_UPSCALER", "AUTO_APPLY_DRAFT_CHANGES", "BACKUP_FILES"):
             if key not in value:
                 value[key] = DEFAULTS[key]
     return validate_settings(value, root)
