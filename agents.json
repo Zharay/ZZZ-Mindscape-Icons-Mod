@@ -69,6 +69,20 @@
       "round": { "hash": "21fca91f", "offset": [240, 130], "scale": 0.7, "rotation": 0 }
     }
   ],
+  "Belle": [
+    {
+      "round": { "hash": "45062ca9", "offset": [0, 52], "scale": 0.6, "rotation": 0.0 }
+    },
+    {
+      "round": { "hash": "17d6921a", "offset": [0, 52], "scale": 0.6, "rotation": 0.0 }
+    },
+    {
+      "round": { "hash": "cda7943d", "offset": [0, 52], "scale": 0.6, "rotation": 0.0 }
+    },
+    {
+      "round": { "hash": "de187580", "offset": [0, 52], "scale": 0.6, "rotation": 0.0 }
+    }
+  ],
   "Ben": [
     {
       "tab": { "hash": "a611b261", "offset": [-40, 20], "scale": 0.5, "rotation": 0 },
@@ -517,6 +531,20 @@
       "tab": { "hash": "84e06de0", "offset": [-110, 70], "scale": 0.7, "rotation": 0 },
       "select": { "hash": "ec21351f", "offset": [-120, 20], "scale": 0.85, "rotation": 0 },
       "round": { "hash": "c88f9303", "offset": [-120, 90], "scale": 0.7, "rotation": 0 }
+    }
+  ],
+  "Wise": [
+    {
+      "round": { "hash": "6b2bdbdc", "offset": [0, 52], "scale": 0.6, "rotation": 0.0 }
+    },
+    {
+      "round": { "hash": "1e304cb7", "offset": [0, 52], "scale": 0.6, "rotation": 0.0 }
+    },
+    {
+      "round": { "hash": "726b2114", "offset": [0, 52], "scale": 0.6, "rotation": 0.0 }
+    },
+    {
+      "round": { "hash": "a4810b20", "offset": [0, 52], "scale": 0.6, "rotation": 0.0 }
     }
   ],
   "Yanagi": [
