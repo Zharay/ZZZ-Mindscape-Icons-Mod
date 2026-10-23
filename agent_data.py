@@ -57,7 +57,7 @@ def create_texture_override(agent: str, skin_idx: int, source_dirs: list[str], h
             resource_name = f"{agent}{skin_str}{variant}{kind}"
 
             override_string += dedent(f"""\
-                   {"\telse " if i > 0 else "\t"}if $variant == {variant_index}
+                   {"\telse " if i > 0 else "\t"}if $use{kind}Variant == {variant_index}
                             this = Resource{resource_name}
                     """)
 
@@ -81,27 +81,48 @@ def create_texture_override(agent: str, skin_idx: int, source_dirs: list[str], h
             filename = {file_name}
             """)
 
-def create_ini_header(mod_name: str, mod_ver: str, source_dirs: list[str]) -> str:
+def create_ini_header(
+    mod_name: str, mod_ver: str, source_dirs: list[str], mask_kind: HashType | None = None
+) -> str:
+    """Create controls for one mask, or all masks when mask_kind is omitted."""
+    kinds = [
+        (index, kind)
+        for index, kind in enumerate(("Select", "Tab", "Round"), 1)
+        if mask_kind is None or kind == mask_kind
+    ]
     text = f"{mod_name} v{mod_ver}"
     header = f"; {text} {'-' * (60 - len(text))}\n\n"
 
     header += f"; Constants {'-' * (60 - 9)}\n\n[Constants]\n"
     if len(source_dirs) > 1:
-        header += "global persist $variant = 0\n"
-    for kind in ("Select", "Tab", "Round"):
+        for _, kind in kinds:
+            header += f"global persist $use{kind}Variant = 0\n"
+    for _, kind in kinds:
         header += f"global persist $use{kind} = 1\n"
-    header += "\n"
-    if len(source_dirs) > 1:
-        header += dedent(f"""\
-            [KeySwapVariant]
-            key = ctrl space
-            type = cycle
-            $variant = {','.join(str(i) for i in range(len(source_dirs)))}
+    header += "global persist $lockIcons = 0\n\n"
 
-            """)
-    for index, kind in enumerate(("Select", "Tab", "Round"), 1):
+    header += dedent("""\
+        [KeySwapLock]
+        key = ctrl alt shift L
+        type = cycle
+        $lockIcons = 0,1
+
+        """)
+    if len(source_dirs) > 1:
+        for index, kind in kinds:
+            header += dedent(f"""\
+                [KeySwapVariant{kind}]
+                condition = $lockIcons == 0
+                key = ctrl alt {index}
+                type = cycle
+                $use{kind}Variant = {','.join(str(i) for i in range(len(source_dirs)))}
+
+                """)
+
+    for index, kind in kinds:
         header += dedent(f"""\
             [KeyToggle{kind}]
+            condition = $lockIcons == 0
             key = ctrl alt shift {index}
             type = cycle
             $use{kind} = 0,1
@@ -183,7 +204,7 @@ def create_ini() -> None:
         return collected
 
     if SEPARATE_INIS:
-        kind_map = {
+        kind_map: dict[str, HashType] = {
             'select': 'Select',
             'tab': 'Tab',
             'round': 'Round'
@@ -193,7 +214,7 @@ def create_ini() -> None:
             ini_name = f"{MOD_NAME.replace(' ', '')}_{suffix}.ini"
             ini_path = os.path.join(mod_folder, ini_name)
             with open(ini_path, 'w', encoding='utf-8') as output:
-                output.write(create_ini_header(MOD_NAME, MOD_VERSION, SOURCE_DIRS))
+                output.write(create_ini_header(MOD_NAME, MOD_VERSION, SOURCE_DIRS, suffix))
                 output.write(collect_overrides_for_skin_type(skin_type))
                 output.write(footer)
     else:

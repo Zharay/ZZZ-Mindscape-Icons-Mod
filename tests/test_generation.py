@@ -31,6 +31,51 @@ class PipelineTests(unittest.TestCase):
             cwd=self.root.parent, capture_output=True, text=True, timeout=45,
         )
 
+    def test_ini_headers_match_output_masks_and_variant_count(self):
+        kinds = ("Select", "Tab", "Round")
+        for separate in (True, False):
+            for variant_count in (1, 2):
+                with self.subTest(separate=separate, variant_count=variant_count):
+                    draft = Draft(self.root)
+                    draft.settings["SEPARATE_INIS"] = separate
+                    draft.settings["SOURCE_DIRS"] = ["sources/M6", "sources/M3"][:variant_count]
+                    draft.save()
+                    result = self.run_pipeline()
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    mod = self.root / "export" / "Mindscape Icons"
+                    filenames = (
+                        [(f"MindscapeIcons_{kind}.ini", (kind,)) for kind in kinds]
+                        if separate else [("MindscapeIcons.ini", kinds)]
+                    )
+                    self.assertEqual(len(list(mod.glob("*.ini"))), len(filenames))
+                    for filename, included_kinds in filenames:
+                        text = (mod / filename).read_text(encoding="utf-8")
+                        self.assertEqual(text.count("global persist $lockIcons = 0"), 1)
+                        self.assertEqual(text.count("[KeySwapLock]"), 1)
+                        self.assertIn("key = ctrl alt shift L", text)
+                        for index, kind in enumerate(kinds, 1):
+                            if kind not in included_kinds:
+                                self.assertNotIn(f"$use{kind}", text)
+                                self.assertNotIn(f"[KeyToggle{kind}]", text)
+                                self.assertNotIn(f"[KeySwapVariant{kind}]", text)
+                                continue
+                            self.assertIn(f"global persist $use{kind} = 1", text)
+                            self.assertIn(
+                                f"[KeyToggle{kind}]\ncondition = $lockIcons == 0\n"
+                                f"key = ctrl alt shift {index}\n", text,
+                            )
+                            if variant_count > 1:
+                                self.assertIn(f"global persist $use{kind}Variant = 0", text)
+                                self.assertIn(
+                                    f"[KeySwapVariant{kind}]\ncondition = $lockIcons == 0\n"
+                                    f"key = ctrl alt {index}\n", text,
+                                )
+                                self.assertIn(f"$use{kind}Variant = 0,1", text)
+                                self.assertIn(f"if $use{kind}Variant == 1", text)
+                            else:
+                                self.assertNotIn(f"$use{kind}Variant", text)
+                                self.assertNotIn(f"[KeySwapVariant{kind}]", text)
+
     def test_complete_pipeline_and_fresh_settings(self):
         draft = Draft(self.root)
         draft.add_skin("Alice")
@@ -56,7 +101,7 @@ class PipelineTests(unittest.TestCase):
                     with Image.open(path) as image:
                         self.assertEqual(image.size, size)
             text = (mod / f"TestIcons_{kind.capitalize()}.ini").read_text(encoding="utf-8")
-            self.assertIn("$variant = 0,1", text)
+            self.assertIn(f"$use{kind.capitalize()}Variant = 0,1", text)
             self.assertIn(f"filename = {kind}/AliceSkinM6.png", text)
             self.assertIn("hash = 12345678" if kind == "select" else
                           "hash = 23456789" if kind == "tab" else "hash = 34567890", text)
@@ -142,8 +187,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(list(mod.glob("*.ini"))), 3)
         for kind, color in colors.items():
             text = (mod / f"MindscapeIcons_{kind.capitalize()}.ini").read_text()
-            self.assertIn("$variant = 0,1,2", text)
-            self.assertIn("if $variant == 2", text)
+            self.assertIn(f"$use{kind.capitalize()}Variant = 0,1,2", text)
+            self.assertIn(f"if $use{kind.capitalize()}Variant == 2", text)
             self.assertIn(f"filename = {kind}/AliceChibi.png", text)
             self.assertIn(f"filename = {kind}/AliceSkinChibi.png", text)
             with Image.open(mod / kind / "AliceChibi.png") as image:
@@ -178,9 +223,9 @@ class PipelineTests(unittest.TestCase):
         mod = self.root / "export" / "Mindscape Icons"
         for kind in ("Select", "Tab", "Round"):
             text = (mod / f"MindscapeIcons_{kind}.ini").read_text()
-            self.assertIn("if $variant == 1", text)
-            self.assertNotIn("if $variant == 0", text)
-            self.assertEqual("if $variant == 2" in text, kind == "Select")
+            self.assertIn(f"if $use{kind}Variant == 1", text)
+            self.assertNotIn(f"if $use{kind}Variant == 0", text)
+            self.assertEqual(f"if $use{kind}Variant == 2" in text, kind == "Select")
             self.assertNotIn("filename = " + kind.lower() + "/AliceM6.png", text)
 
     def test_chibi_only_variant_and_combined_ini(self):
