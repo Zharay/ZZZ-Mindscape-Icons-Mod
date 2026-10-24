@@ -333,12 +333,12 @@
     {
       "tab": { "hash": "5a7797c1", "offset": [0, -42], "scale": 2.0, "rotation": 0.0 },
       "select": { "hash": "c4794fb8", "offset": [0, 0], "scale": 4.3, "rotation": 0.0 },
-      "round": { "hash": "00000000", "offset": [0, 0], "scale": 1.42, "rotation": 0.0 }
+      "round": { "hash": "2e6975cf", "offset": [0, 0], "scale": 1.42, "rotation": 0.0 }
     },
     {
       "tab": { "hash": "5a7797c1", "offset": [0, 0], "scale": 1.0, "rotation": 0.0 },
       "select": { "hash": "66729123", "offset": [0, 0], "scale": 1.0, "rotation": 0.0 },
-      "round": { "hash": "00000000", "offset": [0, 0], "scale": 1.42, "rotation": 0.0 }
+      "round": { "hash": "2e6975cf", "offset": [0, 0], "scale": 1.42, "rotation": 0.0 }
     }
   ],
   "Piper": [
