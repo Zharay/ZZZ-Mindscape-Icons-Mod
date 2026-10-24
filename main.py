@@ -20,15 +20,13 @@ def main() -> None:
     export_dir: Path = resolve_path(ROOT, settings["EXPORT_DIR"])
     gen_masks()
     if settings["CLEAN_EXPORTS"]:
-        print(f"Force clean requested! Clearing contents of {export_dir}...")
-        if export_dir.exists():
-            for child in export_dir.iterdir():
-                if child.is_dir() and not child.is_symlink():
-                    shutil.rmtree(child)
-                else:
-                    child.unlink()
-        else:
-            export_dir.mkdir(parents=True)
+        mod_dir = export_dir / settings["MOD_NAME"]
+        print(f"Force clean requested! Removing mod folder {mod_dir}...")
+        if mod_dir.is_symlink():
+            mod_dir.unlink()
+        elif mod_dir.exists():
+            shutil.rmtree(mod_dir)
+        export_dir.mkdir(parents=True, exist_ok=True)
     gen_textures()
     create_ini()
     export()

@@ -94,6 +94,6 @@ python main.py
 This creates the mod files in the `export` folder. Copy the generated mod folder
 into ZZMI's Mods folder to use it in the game.
 
-**Warning:** By default, generating the mod replaces the contents of the
-configured output folder.
-The folder itself is kept.
+**Warning:** By default, generating the mod deletes and recreates only the
+subfolder named by `MOD_NAME` inside the output folder. Other files and folders
+are kept.

@@ -250,7 +250,9 @@ class PipelineTests(unittest.TestCase):
     def test_cleanup_and_missing_sources_are_visible(self):
         export = self.root / "export"
         export.mkdir()
-        marker = export / "old.txt"
+        mod = export / "Mindscape Icons"
+        mod.mkdir()
+        marker = mod / "old.txt"
         marker.write_text("old")
         (self.root / "sources" / "M3" / "Alice.png").unlink()
         result = self.run_pipeline()
@@ -259,13 +261,19 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("not found! Skipping...", result.stdout)
         self.assertTrue((export / "mindscape_icons_v3.3.zip").exists())
 
-    def test_cleanup_preserves_export_directory_and_removes_all_contents(self):
+    def test_cleanup_removes_only_configured_mod_folder(self):
+        draft = Draft(self.root)
+        draft.settings["MOD_NAME"] = "Custom Icons"
+        draft.save()
         export = self.root / "export"
-        nested = export / "old" / "nested"
+        nested = export / "Custom Icons" / "old" / "nested"
         nested.mkdir(parents=True)
         (nested / "old.txt").write_text("old")
         (export / "old.zip").write_bytes(b"old")
         (export / ".hidden").write_text("old")
+        other_mod = export / "Mindscape Icons"
+        other_mod.mkdir()
+        (other_mod / "keep.txt").write_text("preserve me")
         result = subprocess.run(
             [sys.executable, "-c",
              "from pathlib import Path\n"
@@ -273,8 +281,8 @@ class PipelineTests(unittest.TestCase):
              "import main\n"
              "remove = main.shutil.rmtree\n"
              "def remove_child(path, *args, **kwargs):\n"
-             "    assert Path(path).resolve() != Path('export').resolve(), "
-             "'Export directory must not be deleted'\n"
+             "    assert Path(path).resolve() == Path('export', 'Custom Icons').resolve(), "
+             "'Only the configured mod directory may be deleted'\n"
              "    return remove(path, *args, **kwargs)\n"
              "with patch('main.shutil.rmtree', side_effect=remove_child):\n"
              "    main.main()\n"],
@@ -282,10 +290,11 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(export.is_dir())
-        self.assertFalse((export / "old").exists())
-        self.assertFalse((export / "old.zip").exists())
-        self.assertFalse((export / ".hidden").exists())
-        self.assertTrue((export / "mindscape_icons_v3.3.zip").exists())
+        self.assertFalse((export / "Custom Icons" / "old").exists())
+        self.assertEqual((export / "old.zip").read_bytes(), b"old")
+        self.assertEqual((export / ".hidden").read_text(), "old")
+        self.assertEqual((other_mod / "keep.txt").read_text(), "preserve me")
+        self.assertTrue((export / "custom_icons_v3.3.zip").exists())
 
     def test_cleanup_unlinks_directory_symlinks_without_deleting_targets(self):
         export = self.root / "export"
@@ -294,7 +303,7 @@ class PipelineTests(unittest.TestCase):
         outside.mkdir()
         marker = outside / "keep.txt"
         marker.write_text("preserve me")
-        link = export / "linked"
+        link = export / "Mindscape Icons"
         try:
             link.symlink_to(outside, target_is_directory=True)
         except OSError:
@@ -302,6 +311,7 @@ class PipelineTests(unittest.TestCase):
         result = self.run_pipeline()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(link.is_symlink())
+        self.assertTrue(link.is_dir())
         self.assertEqual(marker.read_text(), "preserve me")
 
     def test_main_import_does_not_generate(self):

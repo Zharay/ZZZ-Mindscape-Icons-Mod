@@ -903,7 +903,8 @@ class Editor:
             export = resolve_path(self.draft.root, settings["EXPORT_DIR"])
             if settings["CLEAN_EXPORTS"] and not messagebox.askyesno(
                 "Confirm export cleanup",
-                f"Generation will DELETE all contents of:\n{export}\n\nThe folder itself will be kept.\n\nContinue?",
+                f"Generation will DELETE and recreate the mod folder:\n{export / settings['MOD_NAME']}\n\n"
+                "Other files and folders in the output directory will be kept.\n\nContinue?",
                 parent=self.window,
             ):
                 return
@@ -995,9 +996,9 @@ class ConfigDialog:
             "MOD_NAME": "Mod folder and INI name",
             "MOD_VERSION": "Version used in archive filename",
             "CUR_AGENT": "Only generate this agent (blank = all)",
-            "EXPORT_DIR": "Output/ZIP directory; cleanup deletes its contents",
+            "EXPORT_DIR": "Output/ZIP directory; cleanup only removes the MOD_NAME subfolder",
             "FALLBACK_MODE": "Legacy option; cross-variant fallback is not implemented",
-            "CLEAN_EXPORTS": "Delete output directory contents before generating; keep the folder",
+            "CLEAN_EXPORTS": "Delete and recreate only the MOD_NAME subfolder before generating",
             "SEPARATE_INIS": "Separate Select / Tab / Round INIs",
             "AUTO_APPLY_DRAFT_CHANGES": "Apply edited mask fields to the draft without prompting",
             "BACKUP_FILES": "Back up replaced files in a backup subfolder beside each original",
