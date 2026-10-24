@@ -442,7 +442,7 @@
   ],
   "Severian": [
     {
-      "select": { "hash": "00000000", "offset": [300, 200], "scale": 0.79, "rotation": 19.0 },
+      "select": { "hash": "9b2089d0", "offset": [300, 200], "scale": 0.79, "rotation": 19.0 },
       "tab": { "hash": "20fc69ef", "offset": [167, 268], "scale": 0.6, "rotation": 38.245 },
       "round": { "hash": "9e89af8c", "offset": [263, 189], "scale": 0.61, "rotation": 13.303 }
     }
